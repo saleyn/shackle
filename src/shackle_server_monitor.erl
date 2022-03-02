@@ -50,7 +50,8 @@ start_link(MonitorName, MonitorOptions) ->
 -spec init(term()) -> {ok, state()}.
 init({PoolName, Servers, BacklogSize}) ->
     MonitoringInterval = ?GET_ENV(monitoring_interval, ?DEFAULT_INTERVAL_IN_MS),
-    PercentageThreshold = ?GET_ENV(backlog_percentage_threshold, ?DEFAULT_PERCENTAGE_THRESHOLD),
+    PercentageThreshold = ?GET_ENV(backlog_percentage_threshold,
+                                   ?DEFAULT_PERCENTAGE_THRESHOLD),
     {ok, #state{
         timer_ref = erlang:start_timer(MonitoringInterval, self(), check),
         minimum_pending = trunc(math:ceil(PercentageThreshold * BacklogSize)),

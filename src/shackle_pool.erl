@@ -125,14 +125,8 @@ options_rec(Client, Options) ->
         pool_strategy = PoolStrategy
     }.
 
-server(
-    _Name,
-    #pool_options{
-        client = Client
-    },
-    0
-) ->
-    ?METRICS(Client, counter, <<"no_server">>),
+server(Name, _Options, 0) ->
+    shackle_metrics:increment(Name, no_server),
     {error, no_server};
 server(
     Name,
@@ -153,11 +147,11 @@ server(
                     {ok, ServerName} = shackle_pool_foil:lookup(ServerId),
                     {ok, Client, ServerName};
                 false ->
-                    ?METRICS(Client, counter, <<"backlog_full">>),
+                    shackle_metrics:increment(Name, backlog_full),
                     server(Name, Options, N - 1)
             end;
         false ->
-            ?METRICS(Client, counter, <<"disabled">>),
+            shackle_metrics:increment(Name, disabled),
             server(Name, Options, N - 1)
     end.
 
@@ -169,7 +163,8 @@ server_id(Name, PoolSize, round_robin) ->
     [ServerId] = ets:update_counter(?ETS_TABLE_POOL_INDEX, Key, UpdateOps),
     {Name, ServerId}.
 
-setup(Name, #pool_options{pool_size = PoolSize} = OptionsRec) ->
+setup(Name, #pool_options {pool_size = PoolSize} = OptionsRec) ->
+    shackle_metrics:init(Name),
     shackle_backlog:new(Name),
     shackle_queue:new(Name),
     shackle_status:new(Name, PoolSize),

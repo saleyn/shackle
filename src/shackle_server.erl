@@ -208,10 +208,21 @@ handle_msg({timeout, ExtRequestId}, {#state {
             end,
             {ok, {State, ClientState}}
     end;
-handle_msg(Msg, {#state {
-        pool_name = PoolName
-    } = State, ClientState}) ->
-
+handle_msg(reset, {#state{pool_name = PoolName, id = Id, name = Name,
+                          client = Client} = State,
+                    ClientState}) ->
+    ?WARN(PoolName, "~p: backlog reset", [atom_to_list(Name)]),
+    ?METRICS(Client, counter, <<"backlog_reset">>),
+    reply_all({error, reset}, State),
+    ok = shackle_backlog:new(PoolName, Id),
+    {ok, {State, ClientState}};
+handle_msg(
+    Msg,
+    {#state{
+            pool_name = PoolName
+        } = State,
+        ClientState}
+) ->
     ?WARN(PoolName, "unknown msg: ~p", [Msg]),
     {ok, {State, ClientState}}.
 

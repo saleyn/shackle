@@ -30,7 +30,7 @@
 
 -type state() :: #state{}.
 
--define(DEFAULT_INTERVAL_IN_MS, timer:minutes(5)).
+-define(DEFAULT_INTERVAL_IN_MS, timer:minutes(2)).
 
 %%%===================================================================
 %%% API

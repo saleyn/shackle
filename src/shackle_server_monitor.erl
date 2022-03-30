@@ -116,7 +116,7 @@ is_blocked(#state{
     fun({ServerId, Id}, ToWatch) ->
         Pending = shackle_queue:pending(Queue, Id),
         case {shackle_backlog:size(Backlog, Id), length(Pending)} of
-            {BacklogSize, Size} when Size < BacklogSize ->
+            {BacklogSize, 0} ->
                 sets:add_element(ServerId, ToWatch);
             {_, _} ->
                 ToWatch

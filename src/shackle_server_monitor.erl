@@ -20,6 +20,7 @@
 -record(state, {
     timer_ref :: reference(),
     monitoring_interval :: pos_integer(),
+    minimum_pending :: non_neg_integer(),
     pool_name :: pool_name(),
     backlog_size :: pos_integer() | infinity,
     backlog :: table(),
@@ -31,6 +32,7 @@
 -type state() :: #state{}.
 
 -define(DEFAULT_INTERVAL_IN_MS, timer:minutes(2)).
+-define(DEFAULT_PERCENTAGE_THRESHOLD, 0).
 
 %%%===================================================================
 %%% API
@@ -48,8 +50,10 @@ start_link(MonitorName, MonitorOptions) ->
 -spec init(term()) -> {ok, state()}.
 init({PoolName, Servers, BacklogSize}) ->
     MonitoringInterval = ?GET_ENV(monitoring_interval, ?DEFAULT_INTERVAL_IN_MS),
+    PercentageThreshold = ?GET_ENV(backlog_percentage_threshold, ?DEFAULT_PERCENTAGE_THRESHOLD),
     {ok, #state{
         timer_ref = erlang:start_timer(MonitoringInterval, self(), check),
+        minimum_pending = trunc(math:ceil(PercentageThreshold * BacklogSize)),
         monitoring_interval = MonitoringInterval,
         pool_name = PoolName,
         backlog_size = BacklogSize,
@@ -111,12 +115,13 @@ code_change(_OldVsn, State, _Extra) ->
 is_blocked(#state{
     queue = Queue,
     backlog = Backlog,
-    backlog_size = BacklogSize
+    backlog_size = BacklogSize,
+    minimum_pending = MinimumPending
 }) ->
     fun({ServerId, Id}, ToWatch) ->
         Pending = shackle_queue:pending(Queue, Id),
         case {shackle_backlog:size(Backlog, Id), length(Pending)} of
-            {BacklogSize, 0} ->
+            {BacklogSize, PendingAmount} when PendingAmount =< MinimumPending ->
                 sets:add_element(ServerId, ToWatch);
             {_, _} ->
                 ToWatch

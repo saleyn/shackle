@@ -32,7 +32,7 @@
 -type state() :: #state{}.
 
 -define(DEFAULT_INTERVAL_IN_MS, timer:minutes(2)).
--define(DEFAULT_PERCENTAGE_THRESHOLD, 0).
+-define(DEFAULT_PERCENTAGE_THRESHOLD, 0.8).
 
 %%%===================================================================
 %%% API

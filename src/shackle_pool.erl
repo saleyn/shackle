@@ -126,7 +126,8 @@ options_rec(Client, Options) ->
     }.
 
 server(Name, _Options, 0) ->
-    shackle_metrics:increment(Name, no_server),
+    prometheus_counter:inc(shackle_error_total,
+                           [Name, <<"undefined">>, <<"no server">>]),
     {error, no_server};
 server(
     Name,
@@ -138,7 +139,7 @@ server(
     } = Options,
     N
 ) ->
-    ServerId = server_id(Name, PoolSize, PoolStrategy),
+    ServerId = {_, ServerIdx} = server_id(Name, PoolSize, PoolStrategy),
     case shackle_status:active(ServerId) of
         true ->
             {ok, Backlog} = shackle_pool_foil:lookup({Name, backlog}),
@@ -147,11 +148,15 @@ server(
                     {ok, ServerName} = shackle_pool_foil:lookup(ServerId),
                     {ok, Client, ServerName};
                 false ->
-                    shackle_metrics:increment(Name, backlog_full),
+                    prometheus_counter:inc(shackle_error_total, [
+                        Name, integer_to_binary(ServerIdx), <<"backlog full">>
+                    ]),
                     server(Name, Options, N - 1)
             end;
         false ->
-            shackle_metrics:increment(Name, disabled),
+            prometheus_counter:inc(shackle_error_total, [
+                Name, integer_to_binary(ServerIdx), <<"disabled">>
+            ]),
             server(Name, Options, N - 1)
     end.
 
@@ -164,7 +169,7 @@ server_id(Name, PoolSize, round_robin) ->
     {Name, ServerId}.
 
 setup(Name, #pool_options {pool_size = PoolSize} = OptionsRec) ->
-    shackle_metrics:init(Name),
+    shackle_metrics:init(),
     shackle_backlog:new(Name),
     shackle_queue:new(Name),
     shackle_status:new(Name, PoolSize),

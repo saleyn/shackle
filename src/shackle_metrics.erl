@@ -1,115 +1,74 @@
 -module(shackle_metrics).
 
--export([init/1, increment/2, increment/3, timing_microseconds/3]).
 -export([
-    generate_counters/1,
-    generate_timing_gauges/1,
-    generate_specs/1,
-    generate_name/1,
-    generate_help/1,
-    normalize_name/1,
-    join_binaries/2
+    init/0
 ]).
 
 -define(COUNTERS, [
-    backlog_full,
-    disabled,
-    connect,
-    cast,
-    request,
-    response,
-    response_found,
-    response_not_found,
-    reply,
-    timeout,
-    no_server,
-    no_socket,
-    send_error,
-    handle_request_error,
-    handle_timeout_error,
-    client_connect_error,
-    socket_connect_error,
-    socket_error,
-    connection_closed,
-    received_messages,
-    received_bytes
+    [
+        {name, shackle_cast_total},
+        {help, "Count of shackle cast calls"},
+        {labels, [pool, client]}
+    ],
+    [
+        {name, shackle_connect_total},
+        {help, "Count of shackle connections"},
+        {labels, [pool, server]}
+    ],
+    [
+        {name, shackle_close_total},
+        {help, "Count of shackle connect closes"},
+        {labels, [pool, server]}
+    ],
+    [
+        {name, shackle_error_total},
+        {help, "Count of shackle errors"},
+        {labels, [pool, server, reason]}
+    ],
+    [
+        {name, shackle_reply_total},
+        {help, "Count of shackle replies"},
+        {labels, [pool, server]}
+    ],
+    [
+        {name, shackle_request_total},
+        {help, "Count of shackle requests"},
+        {labels, [pool, server]}
+    ],
+    [
+        {name, shackle_response_total},
+        {help, "Count of shackle responses"},
+        {labels, [pool, server, response]}
+    ],
+    [
+        {name, shackle_received_bytes_total},
+        {help, "Count of shackle received bytes"},
+        {labels, [pool, server]}
+    ],
+    [
+        {name, shackle_received_messages_total},
+        {help, "Count of shackle received messages"},
+        {labels, [pool, server]}
+    ]
 ]).
 
--define(TIMINGS, [
-    reply
+-define(GAUGES, []).
+
+-define(HISTOGRAMS, [
+    [
+        {name, shackle_response_time_microseconds},
+        {help, "Shackle response time distribution"},
+        {buckets, [1000, 2000, 4000, 8000, 16000, 32000, 64000, 96000,
+                   128000, 160000, 192000, 224000, 256000, 512000]},
+        {duration_unit, false},
+        {labels, [pool, server]}
+    ]
 ]).
 
--type pool_name() :: atom().
 
-
--spec increment(pool_name(), atom()) -> ok.
-increment(PoolName, Metric) ->
-    prometheus_counter:inc(generate_name([PoolName, Metric, total])).
-
-
--spec increment(pool_name(), atom(), integer()) -> ok.
-increment(PoolName, Metric, Value) ->
-    prometheus_counter:inc(generate_name([PoolName, Metric, total]), Value).
-
-
--spec timing_microseconds(pool_name(), atom(), integer()) -> ok.
-timing_microseconds(PoolName, Metric, Value) ->
-    prometheus_gauge:set(generate_name([PoolName, Metric, time, microseconds]),
-                         Value).
-
-
--spec init(pool_name()) -> ok.
-init(PoolName) ->
-    lists:map(fun prometheus_counter:declare/1, generate_counters(PoolName)),
-    lists:map(fun prometheus_gauge:declare/1, generate_timing_gauges(PoolName)),
+-spec init() -> ok.
+init() ->
+    lists:map(fun prometheus_counter:declare/1, ?COUNTERS),
+    lists:map(fun prometheus_gauge:declare/1, ?GAUGES),
+    lists:map(fun prometheus_histogram:declare/1, ?HISTOGRAMS),
     ok.
-
-
--spec generate_counters(PoolName :: atom()) ->
-    list(prometheus_metric_spec:spec()).
-generate_counters(PoolName) ->
-    generate_specs([[PoolName, C, total] || C <- ?COUNTERS]).
-
-
--spec generate_timing_gauges(PoolName :: atom()) ->
-    list(prometheus_metric_spec:spec()).
-generate_timing_gauges(PoolName) ->
-    generate_specs([[PoolName, T, time, microseconds] || T <- ?TIMINGS]).
-
-
--spec generate_specs(list(list(atom()))) ->
-    list(prometheus_metric_spec:spec()).
-generate_specs(Names) ->
-    [[{name, generate_name(N)}, {help, generate_help(N)}] || N <- Names].
-
-
--spec generate_name(list(atom())) -> atom().
-generate_name(Parts) ->
-    Tokens0 = lists:map(fun atom_to_binary/1, Parts),
-    Tokens1 = lists:map(fun normalize_name/1, Tokens0),
-    erlang:binary_to_atom(join_binaries(Tokens1, <<"_">>), utf8).
-
-
--spec generate_help(list(atom())) -> binary().
-generate_help(Tokens) ->
-    join_binaries(lists:map(fun atom_to_binary/1, Tokens), <<" ">>).
-
-
--spec normalize_name(binary()) -> binary().
-normalize_name(Name) ->
-    binary:replace(Name, <<".">>, <<"_">>, [global]).
-
-
--spec join_binaries(BinList :: list(binary()), JoinWith :: binary()) ->
-    binary().
-join_binaries([], _) ->
-    <<"">>;
-join_binaries([S], _) ->
-    S;
-join_binaries([S0, S1|R], J) ->
-    join_binaries([<<S0/binary, J/binary, S1/binary>>|R], J).
-
-
--spec atom_to_binary(atom()) -> binary().
-atom_to_binary(A) ->
-    erlang:atom_to_binary(A, utf8).

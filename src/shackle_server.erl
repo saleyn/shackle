@@ -81,17 +81,20 @@ init(Name, Parent, Opts) ->
     {ok, term()}.
 
 handle_msg({_, #cast {} = Cast}, {#state {
+        id = {_, ServerIdx},
         pool_name = PoolName,
         socket = undefined
     } = State, ClientState}) ->
-    shackle_metrics:increment(PoolName, no_socket),
+    prometheus_counter:inc(shackle_error_total, [
+        PoolName, integer_to_binary(ServerIdx), <<"no socket">>
+    ]),
     reply({error, no_socket}, Cast, State),
     {ok, {State, ClientState}};
 handle_msg({Request, #cast {
         timeout = Timeout
     } = Cast}, {#state {
         client = Client,
-        id = Id,
+        id = Id = {_, ServerIdx},
         pool_name = PoolName,
         protocol = Protocol,
         queue = Queue,
@@ -102,7 +105,9 @@ handle_msg({Request, #cast {
         {ok, ExtRequestId, Data, ClientState2} ->
             case Protocol:send(Socket, Data) of
                 ok ->
-                    shackle_metrics:increment(PoolName, request),
+                    prometheus_counter:inc(shackle_request_total, [
+                        PoolName, integer_to_binary(ServerIdx)
+                    ]),
                     case ExtRequestId of
                         undefined ->
                             reply(ok, Cast, State);
@@ -114,7 +119,11 @@ handle_msg({Request, #cast {
                     end,
                     {ok, {State, ClientState2}};
                 {error, Reason} ->
-                    shackle_metrics:increment(PoolName, send_error),
+                    prometheus_counter:inc(shackle_error_total, [
+                                                PoolName,
+                                                integer_to_binary(ServerIdx),
+                                                <<"send error">>
+                                            ]),
                     ?WARN(PoolName, "send error: ~p", [Reason]),
                     Protocol:close(Socket),
                     reply({error, socket_closed}, Cast, State),
@@ -122,7 +131,10 @@ handle_msg({Request, #cast {
             end
     catch
         ?EXCEPTION(E, R, Stacktrace) ->
-            shackle_metrics:increment(PoolName, handle_request_error),
+            prometheus_counter:inc(shackle_error_total, [
+                PoolName, integer_to_binary(ServerIdx),
+                <<"handle_request error">>
+            ]),
             ?WARN(PoolName, "handle_request crash: ~p:~p~n~p~n",
                 [E, R, ?GET_STACK(Stacktrace)]),
             reply({error, client_crash}, Cast, State),
@@ -147,7 +159,7 @@ handle_msg({udp_error, Socket, Reason}, {State, ClientState}) ->
 handle_msg(?MSG_CONNECT, {#state {
         address = Address,
         client = Client,
-        id = Id,
+        id = Id = {_, ServerIdx},
         init_options = Init,
         pool_name = PoolName,
         port = Port,
@@ -161,7 +173,9 @@ handle_msg(?MSG_CONNECT, {#state {
             case client(Client, PoolName, Init, Protocol, Socket) of
                 {ok, ClientState2} ->
                     ReconnectState2 = reconnect_state_reset(ReconnectState),
-                    shackle_metrics:increment(PoolName, connect),
+                    prometheus_counter:inc(shackle_connect_total, [
+                        PoolName, integer_to_binary(ServerIdx)
+                    ]),
                     shackle_status:enable(Id),
 
                     {ok, {State#state {
@@ -169,24 +183,32 @@ handle_msg(?MSG_CONNECT, {#state {
                         socket = Socket
                     }, ClientState2}};
                 {error, _Reason, ClientState2} ->
-                    shackle_metrics:increment(PoolName, client_connect_error),
+                    prometheus_counter:inc(shackle_error_total, [
+                        PoolName, integer_to_binary(ServerIdx),
+                        <<"client connect error">>
+                    ]),
                     Protocol:close(Socket),
                     reconnect(State, ClientState2)
             end;
         {error, _Reason} ->
-            shackle_metrics:increment(PoolName, socket_connect_error),
+            prometheus_counter:inc(shackle_error_total, [
+                PoolName, integer_to_binary(ServerIdx),
+                <<"socket connect error">>
+            ]),
             reconnect(State, ClientState)
     end;
 handle_msg({timeout, ExtRequestId}, {#state {
         client = Client,
-        id = Id,
+        id = Id = {_, ServerIdx},
         pool_name = PoolName,
         protocol = Protocol,
         queue = Queue,
         socket = Socket
     } = State, ClientState}) ->
 
-    shackle_metrics:increment(PoolName, timeout),
+    prometheus_counter:inc(shackle_error_total, [
+        PoolName, integer_to_binary(ServerIdx), <<"timeout">>
+    ]),
     case erlang:function_exported(Client, handle_timeout, 2) of
         true ->
             try Client:handle_timeout(ExtRequestId, ClientState) of
@@ -194,13 +216,19 @@ handle_msg({timeout, ExtRequestId}, {#state {
                     process_responses([Reply], State),
                     {ok, {State, ClientState2}};
                 {error, Reason, ClientState2} ->
-                    shackle_metrics:increment(PoolName, handle_timeout_error),
+                    prometheus_counter:inc(shackle_error_total, [
+                        PoolName, integer_to_binary(ServerIdx),
+                        <<"handle_timeout error">>
+                    ]),
                     ?WARN(PoolName, "handle_timeout error: ~p", [Reason]),
                     Protocol:close(Socket),
                     close(State, ClientState2)
             catch
                 ?EXCEPTION(E, R, Stacktrace) ->
-                    shackle_metrics:increment(PoolName, handle_timeout_error),
+                    prometheus_counter:inc(shackle_error_total, [
+                        PoolName, integer_to_binary(ServerIdx),
+                        <<"handle_timeout exception">>
+                    ]),
                     ?WARN(PoolName, "handle_timeout error: ~p:~p~n~p~n",
                         [E, R, ?GET_STACK(Stacktrace)]),
                     Protocol:close(Socket),
@@ -327,27 +355,36 @@ connect(Protocol, Address, Port, SocketOptions, PoolName) ->
     end.
 
 handle_msg_close(Socket, #state {
+        id = {_, ServerIdx},
         socket = Socket,
         pool_name = PoolName
     } = State, ClientState) ->
-    shackle_metrics:increment(PoolName, connection_closed),
+    prometheus_counter:inc(shackle_close_total,
+                           [PoolName, integer_to_binary(ServerIdx)]),
     ?WARN(PoolName, "connection closed", []),
     close(State, ClientState);
 handle_msg_close(_Socket,
-                 #state { pool_name = PoolName } = State,
+                 #state { id = {_, ServerIdx}, pool_name = PoolName } = State,
                  ClientState) ->
-    shackle_metrics:increment(PoolName, connection_closed),
+    prometheus_counter:inc(shackle_close_total,
+                           [PoolName, integer_to_binary(ServerIdx)]),
     {ok, {State, ClientState}}.
 
 handle_msg_data(Socket, Data, #state {
+        id = {_, ServerIdx},
         client = Client,
         pool_name = PoolName,
         protocol = Protocol,
         socket = Socket
     } = State, ClientState) ->
+    ServerIdxBin = integer_to_binary(ServerIdx),
 
-    shackle_metrics:increment(PoolName, received_messages),
-    shackle_metrics:increment(PoolName, received_bytes, byte_size(Data)),
+    prometheus_counter:inc(shackle_received_bytes_total,
+                           [PoolName, ServerIdxBin],
+                           byte_size(Data)),
+    prometheus_counter:inc(shackle_received_messages_total,
+                           [PoolName, ServerIdxBin]),
+
     try Client:handle_data(Data, ClientState) of
         {ok, Replies, ClientState2} ->
             process_responses(Replies, State),
@@ -367,12 +404,15 @@ handle_msg_data(_Socket, _Data, State, ClientState) ->
     {ok, {State, ClientState}}.
 
 handle_msg_error(Socket, Reason, #state {
+        id = {_, ServerIdx},
         socket = Socket,
         pool_name = PoolName,
         protocol = Protocol
     } = State, ClientState) ->
 
-    shackle_metrics:increment(PoolName, socket_error),
+    prometheus_counter:inc(shackle_error_total, [
+        PoolName, integer_to_binary(ServerIdx), <<"socket error">>
+    ]),
     ?WARN(PoolName, "connection error: ~p", [Reason]),
     Protocol:close(Socket),
     close(State, ClientState);
@@ -383,20 +423,24 @@ process_responses([], _State) ->
     ok;
 process_responses([{ExtRequestId, Reply} | T], #state {
         pool_name = PoolName,
-        id = Id,
+        id = Id = {_, ServerIdx},
         queue = Queue
     } = State) ->
+    ServerIdxBin = integer_to_binary(ServerIdx),
 
-    shackle_metrics:increment(PoolName, response),
     case shackle_queue:remove(Queue, Id, ExtRequestId) of
         {ok, #cast {timestamp = Timestamp} = Cast, TimerRef} ->
-            shackle_metrics:increment(PoolName, response_found),
-            Diff = timer:now_diff(os:timestamp(), Timestamp),
-            shackle_metrics:timing_microseconds(PoolName, reply, Diff),
+            prometheus_counter:inc(shackle_response_total,
+                                   [PoolName, ServerIdxBin, <<"found">>]),
+            TimeDiff = timer:now_diff(os:timestamp(), Timestamp),
+            prometheus_histogram:observe(shackle_response_time_microseconds,
+                                         [PoolName, ServerIdxBin],
+                                         TimeDiff),
             erlang:cancel_timer(TimerRef),
             reply(Reply, Cast, State);
         {error, not_found} ->
-            shackle_metrics:increment(PoolName, response_not_found),
+            prometheus_counter:inc(shackle_response_total,
+                                   [PoolName, ServerIdxBin, <<"not found">>]),
             ok
     end,
     process_responses(T, State).
@@ -464,17 +508,19 @@ reconnect_timer(#state {
 reply(_Reply, #cast {pid = undefined}, #state {
         backlog = Backlog,
         pool_name = PoolName,
-        id = Id
+        id = Id = {_, ServerIdx}
     }) ->
-    shackle_metrics:increment(PoolName, reply),
+    ServerIdxBin = integer_to_binary(ServerIdx),
+    prometheus_counter:inc(shackle_reply_total, [PoolName, ServerIdxBin]),
     shackle_backlog:decrement(Backlog, Id),
     ok;
 reply(Reply, #cast {pid = Pid} = Cast, #state {
         backlog = Backlog,
         pool_name = PoolName,
-        id = Id
+        id = Id = {_, ServerIdx}
     }) ->
-    shackle_metrics:increment(PoolName, reply),
+    ServerIdxBin = integer_to_binary(ServerIdx),
+    prometheus_counter:inc(shackle_reply_total, [PoolName, ServerIdxBin]),
     shackle_backlog:decrement(Backlog, Id),
     Pid ! {Cast, Reply},
     ok.

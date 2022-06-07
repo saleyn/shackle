@@ -8,47 +8,47 @@
     [
         {name, shackle_cast_total},
         {help, "Count of shackle cast calls"},
-        {labels, [pool, client]}
+        {labels, [client, pool]}
     ],
     [
         {name, shackle_connect_total},
         {help, "Count of shackle connections"},
-        {labels, [pool, server]}
+        {labels, [client, pool, server]}
     ],
     [
         {name, shackle_close_total},
         {help, "Count of shackle connect closes"},
-        {labels, [pool, server]}
+        {labels, [client, pool, server]}
     ],
     [
         {name, shackle_error_total},
         {help, "Count of shackle errors"},
-        {labels, [pool, server, reason]}
+        {labels, [client, pool, server, reason]}
     ],
     [
         {name, shackle_reply_total},
         {help, "Count of shackle replies"},
-        {labels, [pool, server]}
+        {labels, [client, pool, server]}
     ],
     [
         {name, shackle_request_total},
         {help, "Count of shackle requests"},
-        {labels, [pool, server]}
+        {labels, [client, pool, server]}
     ],
     [
         {name, shackle_response_total},
         {help, "Count of shackle responses"},
-        {labels, [pool, server, response]}
+        {labels, [client, pool, server, response]}
     ],
     [
         {name, shackle_received_bytes_total},
         {help, "Count of shackle received bytes"},
-        {labels, [pool, server]}
+        {labels, [client, pool, server]}
     ],
     [
         {name, shackle_received_messages_total},
         {help, "Count of shackle received messages"},
-        {labels, [pool, server]}
+        {labels, [client, pool, server]}
     ]
 ]).
 
@@ -61,7 +61,7 @@
         {buckets, [1000, 2000, 4000, 8000, 16000, 32000, 64000, 96000,
                    128000, 160000, 192000, 224000, 256000, 512000]},
         {duration_unit, false},
-        {labels, [pool, server]}
+        {labels, [client, pool, server]}
     ]
 ]).
 

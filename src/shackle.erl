@@ -51,7 +51,7 @@ cast(PoolName, Request, Pid, Timeout) ->
     Timestamp = os:timestamp(),
     case shackle_pool:server(PoolName) of
         {ok, Client, Server} ->
-            prometheus_counter:inc(shackle_cast_total, [PoolName, Client]),
+            prometheus_counter:inc(shackle_cast_total, [Client, PoolName]),
             RequestId = {Server, make_ref()},
             Server ! {Request, #cast {
                 client = Client,

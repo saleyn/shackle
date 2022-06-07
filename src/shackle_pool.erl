@@ -125,9 +125,10 @@ options_rec(Client, Options) ->
         pool_strategy = PoolStrategy
     }.
 
-server(Name, _Options, 0) ->
-    prometheus_counter:inc(shackle_error_total,
-                           [Name, <<"undefined">>, <<"no server">>]),
+server(Name, #pool_options{ client = Client }, 0) ->
+    prometheus_counter:inc(shackle_error_total, [
+        Client, Name, <<"undefined">>, <<"no server">>
+    ]),
     {error, no_server};
 server(
     Name,
@@ -149,13 +150,15 @@ server(
                     {ok, Client, ServerName};
                 false ->
                     prometheus_counter:inc(shackle_error_total, [
-                        Name, integer_to_binary(ServerIdx), <<"backlog full">>
+                        Client, Name, integer_to_binary(ServerIdx),
+                        <<"backlog full">>
                     ]),
                     server(Name, Options, N - 1)
             end;
         false ->
             prometheus_counter:inc(shackle_error_total, [
-                Name, integer_to_binary(ServerIdx), <<"disabled">>
+                Client, Name, integer_to_binary(ServerIdx),
+                <<"disabled">>
             ]),
             server(Name, Options, N - 1)
     end.

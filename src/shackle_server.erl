@@ -441,7 +441,7 @@ process_responses([{ExtRequestId, Reply} | T], #state {
             ]),
             TimeDiff = timer:now_diff(os:timestamp(), Timestamp),
             prometheus_histogram:observe(shackle_response_time_microseconds, [
-                Client, PoolName, ServerIdxBin
+                Client, PoolName
             ], TimeDiff),
             erlang:cancel_timer(TimerRef),
             reply(Reply, Cast, State);

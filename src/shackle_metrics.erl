@@ -61,7 +61,7 @@
         {buckets, [1000, 2000, 4000, 8000, 16000, 32000, 64000, 96000,
                    128000, 160000, 192000, 224000, 256000, 512000]},
         {duration_unit, false},
-        {labels, [client, pool, server]}
+        {labels, [client, pool]}
     ]
 ]).
 

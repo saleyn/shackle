@@ -1,0 +1,13 @@
+metadata:
+  name: erlang-shackle
+  description: "High-Performance Erlang Network Client Framework."
+  labels:
+    jira-project: DEGA
+    jira-board: 189
+  links:
+    - url: https://github.com/adgear/erlang-shackle/blob/master/README.md
+      title: Component Documentation Page
+spec:
+  owner: cg-dsp-bidding-system
+  type: library
+  lifecycle:  production

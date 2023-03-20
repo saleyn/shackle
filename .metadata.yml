@@ -8,6 +8,6 @@ metadata:
     - url: https://github.com/adgear/erlang-shackle/blob/master/README.md
       title: Component Documentation Page
 spec:
-  owner: cg-dsp-bidding-system
+  owner: cg-dsp-bidding-systems
   type: library
   lifecycle:  production

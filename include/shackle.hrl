@@ -2,6 +2,7 @@
 -record(cast, {
     client         :: client(),
     pid            :: undefined | pid(),
+    batch_ref      :: batch_ref(),
     request_id     :: request_id(),
     timeout        :: timeout(),
     timestamp      :: erlang:timestamp()
@@ -23,6 +24,8 @@
 
 %% types
 -type backlog_size() :: pos_integer() | infinity.
+-type batch_ref() :: undefined | reference().
+-type batch_state() :: {batch_ref(), non_neg_integer()}.
 -type cast() :: #cast {}.
 -type client() :: module().
 -type client_option() :: {address, inet_address()} |

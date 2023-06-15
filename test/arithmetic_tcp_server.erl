@@ -72,9 +72,18 @@ loop(Socket, Buffer) ->
     case gen_tcp:recv(Socket, 0) of
         {ok, Requests} ->
             Requests2 = <<Buffer/binary, Requests/binary>>,
-            {Replies, Buffer2} = arithmetic_protocol:parse_requests(Requests2),
-            ok = gen_tcp:send(Socket, Replies),
+            Buffer2 = loop_parse_send(Requests2, Socket),
             loop(Socket, Buffer2);
         {error, closed} ->
             ok
+    end.
+
+loop_parse_send(Buffer, Socket) ->
+    {Reply, Buffer2} = arithmetic_protocol:parse_request(Buffer),
+    case Reply of
+        need_more -> Buffer2;
+        skip -> loop_parse_send(Buffer2, Socket);
+        _ ->
+            ok = gen_tcp:send(Socket, Reply),
+            loop_parse_send(Buffer2, Socket)
     end.

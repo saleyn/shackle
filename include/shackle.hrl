@@ -25,7 +25,7 @@
 %% types
 -type backlog_size() :: pos_integer() | infinity.
 -type batch_ref() :: undefined | reference().
--type batch_state() :: {batch_ref(), non_neg_integer()}.
+-type batch_state() :: {batch_ref(), non_neg_integer(), [{request_ref(), request()}]}.
 -type cast() :: #cast {}.
 -type client() :: module().
 -type client_option() :: {address, inet_address()} |
@@ -60,7 +60,10 @@
 -type pool_strategy() :: random | round_robin.
 -type protocol() :: shackle_ssl| shackle_tcp | shackle_udp.
 -type reconnect_state() :: #reconnect_state {}.
--type request_id() :: {server_name(), reference()}.
+-type reply() :: term().
+-type request() :: term().
+-type request_id() :: {server_name(), request_ref()}.
+-type request_ref() :: reference().
 -type response() :: {external_request_id(), term()}.
 -type server_index() :: pos_integer().
 -type server_id() :: {pool_name(), server_index()}.

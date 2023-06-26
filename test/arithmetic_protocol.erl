@@ -13,7 +13,7 @@
 -define(MAX_REQUEST_ID, 4294967296).
 
 -type int() :: 0..4294967295.
--type operation() :: add | multiply | noop.
+-type operation() :: add | multiply | noop | modulo.
 -type tiny_int() :: 0..255.
 
 %% public
@@ -21,7 +21,8 @@
 
 opcode(add) -> 1;
 opcode(multiply) -> 2;
-opcode(noop) -> 3.
+opcode(noop) -> 3;
+opcode(modulo) -> 4.
 
 -spec parse_replies(binary()) -> {[response()], binary()}.
 
@@ -67,6 +68,16 @@ parse_requests(<<_ReqId:32/integer, 3, _A:8/integer, _B:8/integer,
     Rest/binary>>, Acc) ->
 
     parse_requests(Rest, Acc);
+parse_requests(<<_ReqId:32/integer, 4, _A, 0, Rest/binary>>, Acc) ->
+    % special case to test cases
+    % when reply is not provided for every rem(X, 0) request
+
+    parse_requests(Rest, Acc);
+%%    parse_requests(Rest, [<<ReqId:32/integer, A:16/integer>> | Acc]);
+parse_requests(<<ReqId:32/integer, 4, A:8/integer, B:8/integer,
+    Rest/binary>>, Acc) ->
+
+    parse_requests(Rest, [<<ReqId:32/integer, (A rem B):16/integer>> | Acc]);
 parse_requests(Buffer, Acc) ->
     {Acc, Buffer}.
 
@@ -85,5 +96,14 @@ parse_request(<<ReqId:32/integer, 2, A:8/integer, B:8/integer,
 parse_request(<<_ReqId:32/integer, 3, _A:8/integer, _B:8/integer,
     Rest/binary>>) ->
     {skip, Rest};
+parse_request(<<_ReqId:32/integer, 4, _A, 0, Rest/binary>>) ->
+    % special case to test cases
+    % when reply is not provided for every rem(X, 0) request
+
+    {skip, Rest};
+%%    {<<ReqId:32/integer, A:16/integer>>, Rest};
+parse_request(<<ReqId:32/integer, 4, A:8/integer, B:8/integer, Rest/binary>>) ->
+
+    {<<ReqId:32/integer, (A rem B):16/integer>>, Rest};
 parse_request(Buffer) ->
     {need_more, Buffer}.

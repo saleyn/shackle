@@ -7,6 +7,7 @@
     add/2,
     multiply/2,
     noop/0,
+    modulo/2,
     batch/1,
     batch/2,
     start/0,
@@ -60,6 +61,12 @@ multiply(A, B) ->
 
 noop() ->
     shackle:call(?POOL_NAME, noop).
+
+-spec modulo(tiny_int(), tiny_int()) ->
+    pos_integer() | {error, atom()}.
+
+modulo(A, B) ->
+    shackle:call(?POOL_NAME, {modulo, A, B}, ?TIMEOUT).
 
 -spec batch([term()]) ->
     [term() | {error, atom()}].

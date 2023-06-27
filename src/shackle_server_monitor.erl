@@ -47,7 +47,9 @@ start_link(MonitorName, MonitorOptions) ->
 %%% gen_server callbacks
 %%%===================================================================
 
--spec init(term()) -> {ok, state()}.
+-spec init({pool_name(),
+    [{server_name(), pos_integer()}],
+    pos_integer() | infinity}) -> {ok, state()}.
 init({PoolName, Servers, BacklogSize}) ->
     MonitoringInterval = ?GET_ENV(monitoring_interval, ?DEFAULT_INTERVAL_IN_MS),
     PercentageThreshold = ?GET_ENV(backlog_percentage_threshold,

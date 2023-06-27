@@ -66,12 +66,7 @@ remove(Table, ServerId, ExtRequestId) ->
     [{term(), {cast(), reference()}}].
 pending(Table, ServerId) ->
     Match = {{ServerId, '_'}, '_'},
-    case ets:match_object(Table, Match) of
-        [] ->
-            [];
-        Objects ->
-            Objects
-    end.
+    ets:match_object(Table, Match).
 
 %% private
 ets_match_take(Table, Match) ->

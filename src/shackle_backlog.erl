@@ -14,7 +14,8 @@
     delete/2,
     new/1,
     new/2,
-    table_name/1
+    table_name/1,
+    size/2
 ]).
 
 -define(DEFAULT_DECREMENT, -1).
@@ -40,8 +41,14 @@ check(Table, ServerId, BacklogSize, Increment) ->
             true
     end.
 
--spec decrement(table(), server_id()) ->
-    non_neg_integer().
+-spec size(table(), server_id()) -> integer().
+size(Table, ServerId) ->
+    case ets:lookup(Table, ServerId) of
+        [{_ServerId, Counter}] -> Counter;
+        _ -> -1
+    end.
+
+-spec decrement(table(), server_id()) -> non_neg_integer().
 
 decrement(Table, ServerId) ->
     decrement(Table, ServerId, ?DEFAULT_DECREMENT).

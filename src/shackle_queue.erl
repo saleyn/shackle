@@ -11,7 +11,8 @@
     delete/1,
     new/1,
     remove/3,
-    table_name/1
+    table_name/1,
+    pending/2
 ]).
 
 %% internal
@@ -60,6 +61,12 @@ remove(Table, ServerId, ExtRequestId) ->
         [{_, {Cast, TimerRef}}] ->
             {ok, Cast, TimerRef}
     end.
+
+-spec pending(Table :: table(), ServerId :: server_id()) ->
+    [{term(), {cast(), reference()}}].
+pending(Table, ServerId) ->
+    Match = {{ServerId, '_'}, '_'},
+    ets:match_object(Table, Match).
 
 %% private
 ets_match_take(Table, Match) ->

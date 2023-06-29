@@ -3,9 +3,12 @@
 -include_lib("shackle/include/shackle.hrl").
 
 -export([
+    add/1,
     add/2,
     multiply/2,
     noop/0,
+    batch/1,
+    batch/2,
     start/0,
     start/1,
     stop/0
@@ -29,6 +32,17 @@
 -type tiny_int() :: 0..255.
 
 %% public
+
+-spec add([{tiny_int(), tiny_int()}]) ->
+    pos_integer().
+
+add(As) when is_list(As) ->
+    L = length(As),
+    Ops = lists:duplicate(L, add),
+    {A, B} = lists:unzip(As),
+    Batch = lists:zip3(Ops, A, B),
+    batch(Batch).
+
 -spec add(tiny_int(), tiny_int()) ->
     pos_integer().
 
@@ -46,6 +60,18 @@ multiply(A, B) ->
 
 noop() ->
     shackle:call(?POOL_NAME, noop).
+
+-spec batch([term()]) ->
+    [term() | {error, atom()}].
+
+batch(Batch) ->
+    batch(Batch, ?TIMEOUT).
+
+-spec batch([term()], timeout()) ->
+    [term() | {error, atom()}].
+
+batch(Batch, Timeout) ->
+    shackle:batch_call(?POOL_NAME, Batch, Timeout).
 
 -spec start() ->
     ok | {error, shackle_not_started | pool_already_started}.
@@ -111,6 +137,20 @@ handle_request(noop, State) ->
     Data = arithmetic_protocol:request(0, noop, 0, 0),
 
     {ok, undefined, Data, State};
+
+handle_request(Requests, State) when is_list(Requests) ->
+    {RequestIds, Datas, State2} = lists:foldl(
+        fun (R, {Ids, Ds, S}) ->
+            {ok, Id, D, S2} = handle_request(R, S),
+            {[Id|Ids], [D|Ds], S2}
+        end,
+        {[], [], State},
+        Requests),
+    RequestIds2 = lists:reverse(RequestIds),
+    Datas2 = lists:reverse(Datas),
+    Data = list_to_binary(Datas2),
+    {ok, RequestIds2, Data, State2};
+
 handle_request({Operation, A, B}, #state {
         request_counter = RequestCounter
     } = State) ->

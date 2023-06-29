@@ -5,6 +5,7 @@
     opcode/1,
     parse_replies/1,
     parse_requests/1,
+    parse_request/1,
     request/4,
     request_id/1
 ]).
@@ -46,13 +47,13 @@ request_id(RequestCounter) ->
 parse_replies(<<ReqId:32/integer, A:16/integer, Rest/binary>>, Acc) ->
     parse_replies(Rest, [{ReqId, A} | Acc]);
 parse_replies(Buffer, Acc) ->
-    {Acc, Buffer}.
+    {lists:reverse(Acc), Buffer}.
 
 parse_requests(<<"INIT", Rest/binary>>, Acc) ->
     parse_requests(Rest, [<<"OK">> | Acc]);
 parse_requests(<<ReqId:32/integer, 1, 255, 255, Rest/binary>>, Acc) ->
     % special case to test timeouts add(255, 255)
-    timer:sleep(1000),
+    timer:sleep(?DEFAULT_TIMEOUT),
     parse_requests(Rest, [<<ReqId:32/integer, 510:16/integer>> | Acc]);
 parse_requests(<<ReqId:32/integer, 1, A:8/integer, B:8/integer,
     Rest/binary>>, Acc) ->
@@ -68,3 +69,21 @@ parse_requests(<<_ReqId:32/integer, 3, _A:8/integer, _B:8/integer,
     parse_requests(Rest, Acc);
 parse_requests(Buffer, Acc) ->
     {Acc, Buffer}.
+
+parse_request(<<"INIT", Rest/binary>>) ->
+    {<<"OK">>, Rest};
+parse_request(<<ReqId:32/integer, 1, 255, 255, Rest/binary>>) ->
+    % special case to test timeouts add(255, 255)
+    timer:sleep(1000),
+    {<<ReqId:32/integer, 510:16/integer>>, Rest};
+parse_request(<<ReqId:32/integer, 1, A:8/integer, B:8/integer,
+    Rest/binary>>) ->
+    {<<ReqId:32/integer, (A + B):16/integer>>, Rest};
+parse_request(<<ReqId:32/integer, 2, A:8/integer, B:8/integer,
+    Rest/binary>>) ->
+    {<<ReqId:32/integer, (A * B):16/integer>>, Rest};
+parse_request(<<_ReqId:32/integer, 3, _A:8/integer, _B:8/integer,
+    Rest/binary>>) ->
+    {skip, Rest};
+parse_request(Buffer) ->
+    {need_more, Buffer}.

@@ -71,8 +71,8 @@ batch_call(PoolName, Requests, Timeout) ->
 %% </dl>
 %%  Returns:
 %% <dl><dt></dt><dd>A list of replies</dd></dl>
--spec batch_call_expect_ordered_replies(atom(), [term()]) ->
-    [term() | {error, term()} | {ok, no_reply}].
+-spec batch_call_expect_ordered_replies(atom(), [request()]) ->
+    [reply() | {error, term()} | {ok, no_reply}].
 batch_call_expect_ordered_replies(PoolName, Requests) ->
     batch_call_expect_ordered_replies(PoolName, Requests, ?DEFAULT_TIMEOUT).
 
@@ -89,8 +89,8 @@ batch_call_expect_ordered_replies(PoolName, Requests) ->
 %% </dl>
 %%  Returns:
 %% <dl><dt></dt><dd>A list of replies</dd></dl>
--spec batch_call_expect_ordered_replies(atom(), [term()], timeout()) ->
-    [term() | {error, term()} | {ok, no_reply}].
+-spec batch_call_expect_ordered_replies(atom(), [request()], timeout()) ->
+    [reply() | {error, term()} | {ok, no_reply}].
 batch_call_expect_ordered_replies(PoolName, Requests, Timeout) ->
     {ok, BatchState} = batch_cast(PoolName, Requests, self(), Timeout),
     receive_batch_expect_ordered_replies(BatchState).
@@ -300,10 +300,10 @@ receive_batch_expect_ordered_replies({_BatchRef, Count, _RequestRefs}, Acc)
         [Reply|ReplyAcc] end, [], Acc);
 receive_batch_expect_ordered_replies(
     {BatchRef, _Count, RequestRefs} = BatchState, Acc) ->
-    [{Ref, Reply}] = receive_batch_response({BatchRef, 1, RequestRefs}),
+    [Response] = receive_batch_response({BatchRef, 1, RequestRefs}),
     ProcessedResponse =
-        process_ordered_response({Ref, Reply}, RequestRefs, {0, []}),
-    {{BatchRef, _Count2, _RequestRefs2} = BatchState2, Acc2} =
+        process_ordered_response(Response, RequestRefs, {0, []}),
+    {BatchState2, Acc2} =
         handle_ordered_response(ProcessedResponse, BatchState, Acc),
     receive_batch_expect_ordered_replies(BatchState2, Acc2).
 

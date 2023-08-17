@@ -6,6 +6,8 @@
     {shackle_pool_foil, lookup, 1}
 ]).
 
+-dialyzer([{nowarn_function, [options/1, server/3]}]).
+
 %% public
 -export([
     start/3,

@@ -15,7 +15,7 @@
 
 %% public
 -spec ets_options() ->
-  ets:options().
+  [atom() | {atom(), any()}].
 
 -ifdef(DECENTRALIZED_COUNTERS).
 

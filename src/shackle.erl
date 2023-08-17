@@ -23,6 +23,8 @@
     receive_response/1
 ]).
 
+-type request() :: term().
+
 %% public
 %% @doc Processes a list of requests.<p />
 %% Parameters:

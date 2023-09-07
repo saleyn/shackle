@@ -17,7 +17,6 @@
 
 -record(state, {
     address          :: inet_address(),
-    backlog          :: table(),
     client           :: client(),
     id               :: server_id(),
     init_options     :: init_options(),
@@ -28,6 +27,7 @@
     protocol         :: protocol(),
     queue            :: table(),
     reconnect_state  :: undefined | reconnect_state(),
+    release_fun      :: undefined | release_fun(),
     socket           :: undefined | socket(),
     socket_options   :: socket_options(),
     timer_ref        :: undefined | reference()
@@ -51,7 +51,6 @@ init(Name, Parent, Opts) ->
     {PoolName, Index, Client, ClientOptions} = Opts,
     self() ! ?MSG_CONNECT,
     Id = {PoolName, Index},
-    ok = shackle_backlog:new(PoolName, Id),
 
     InitOptions = ?LOOKUP(init_options, ClientOptions, ?DEFAULT_INIT_OPTS),
     Address = address(ClientOptions),
@@ -63,7 +62,6 @@ init(Name, Parent, Opts) ->
 
     {ok, {#state {
         address = Address,
-        backlog = shackle_backlog:table_name(PoolName),
         client = Client,
         id = Id,
         init_options = InitOptions,
@@ -80,20 +78,22 @@ init(Name, Parent, Opts) ->
 -spec handle_msg(term(), {state(), client_state()}) ->
     {ok, term()}.
 
-handle_msg({_, #cast {} = Cast}, {#state {
+handle_msg({_, #cast {} = Cast, ReleaseFun}, {#state {
         client = Client,
         id = {_, ServerIdx},
         pool_name = PoolName,
         socket = undefined
-    } = State, ClientState}) ->
+    } = State_, ClientState}) ->
     prometheus_counter:inc(shackle_error_total, [
         Client, PoolName, integer_to_binary(ServerIdx), <<"no socket">>
     ]),
+    State = State_#state{release_fun = ReleaseFun},
     reply({error, no_socket}, Cast, State),
     {ok, {State, ClientState}};
 
-handle_msg({Request, #cast {timeout = _Timeout} = Cast},
-        {State, ClientState}) ->
+handle_msg({Request, #cast {timeout = _Timeout} = Cast, ReleaseFun},
+        {State_, ClientState}) ->
+    State = State_#state{release_fun = ReleaseFun},
     Client = State#state.client,
     try Client:handle_request(Request, ClientState) of
         {ok, ExtRequestId, Data, ClientState2} ->
@@ -143,8 +143,22 @@ handle_msg({Request, #cast {timeout = _Timeout} = Cast},
             {ok, {State, ClientState}}
     end;
 
-handle_msg({Count, Requests, Casts}, {State, ClientState})
-    when is_integer(Count) andalso Count >= 0 ->
+handle_msg({_, _, Casts, ReleaseFun}, {#state {
+        client = Client,
+        id = {_, ServerIdx},
+        pool_name = PoolName,
+        socket = undefined
+    } = State_, ClientState}) ->
+    prometheus_counter:inc(shackle_error_total, [
+        Client, PoolName, integer_to_binary(ServerIdx), <<"no socket">>
+    ]),
+    State = State_#state{release_fun = ReleaseFun},
+    reply({error, no_socket}, Casts, State),
+    {ok, {State, ClientState}};
+
+handle_msg({Count, Requests, Casts, ReleaseFun}, {State_, ClientState})
+    when is_integer(Count), Count >= 0 ->
+    State = State_#state{release_fun = ReleaseFun},
     Client = State#state.client,
     try Client:handle_request(Requests, ClientState) of
         {ok, ExtRequestIds, Data, ClientState2} ->
@@ -290,14 +304,6 @@ handle_msg({timeout, ExtRequestId}, {#state {
             end,
             {ok, {State, ClientState}}
     end;
-handle_msg(reset, {#state{pool_name = PoolName, id = Id, name = Name,
-                          client = Client} = State,
-                    ClientState}) ->
-    ?WARN(PoolName, "~p: backlog reset", [atom_to_list(Name)]),
-    ?METRICS(Client, counter, <<"backlog_reset">>),
-    reply_all({error, reset}, State),
-    ok = shackle_backlog:new(PoolName, Id),
-    {ok, {State, ClientState}};
 handle_msg(
     Msg,
     {#state{
@@ -313,7 +319,6 @@ handle_msg(
 
 terminate(_Reason, {#state {
         client = Client,
-        id = Id,
         pool_name = PoolName,
         timer_ref = TimerRef
     } = State, ClientState}) ->
@@ -325,8 +330,7 @@ terminate(_Reason, {#state {
             ?WARN(PoolName, "terminate crash: ~p:~p~n~p~n",
                 [E, R, ?GET_STACK(Stacktrace)])
     end,
-    reply_all({error, shutdown}, State),
-    shackle_backlog:delete(PoolName, Id).
+    reply_all({error, shutdown}, State).
 
 %% private
 address(ClientOptions) ->
@@ -562,28 +566,55 @@ reconnect_timer(#state {
 
 reply(_Reply, #cast {pid = undefined}, #state {
         client = Client,
-        backlog = Backlog,
         pool_name = PoolName,
-        id = Id = {_, ServerIdx}
-    }) ->
+        id = {_, ServerIdx}
+    } = State) ->
     ServerIdxBin = integer_to_binary(ServerIdx),
     prometheus_counter:inc(shackle_reply_total, [
         Client, PoolName, ServerIdxBin
     ]),
-    shackle_backlog:decrement(Backlog, Id),
+    release(1, State),
     ok;
 reply(Reply, #cast {pid = Pid} = Cast, #state {
         client = Client,
-        backlog = Backlog,
         pool_name = PoolName,
-        id = Id = {_, ServerIdx}
-    }) ->
+        id = {_, ServerIdx}
+    } = State) ->
     ServerIdxBin = integer_to_binary(ServerIdx),
     prometheus_counter:inc(shackle_reply_total, [
         Client, PoolName, ServerIdxBin
     ]),
-    shackle_backlog:decrement(Backlog, Id),
+    release(1, State),
     Pid ! {Cast, Reply},
+    ok;
+% batch replies, keep in mind that Pid is the same in all casts in the list
+reply(_Reply, [#cast {pid = undefined} | _] = Casts, #state {
+        client = Client,
+        pool_name = PoolName,
+        id = {_, ServerIdx}
+    } = State) ->
+    ServerIdxBin = integer_to_binary(ServerIdx),
+    prometheus_counter:inc(shackle_reply_total, [
+        Client, PoolName, ServerIdxBin
+    ]),
+    release(length(Casts), State),
+    ok;
+reply(Reply, [#cast {pid = Pid} | _] = Casts, #state {
+        client = Client,
+        pool_name = PoolName,
+        id = {_, ServerIdx}
+    } = State) ->
+    ServerIdxBin = integer_to_binary(ServerIdx),
+    prometheus_counter:inc(shackle_reply_total, [
+        Client, PoolName, ServerIdxBin
+    ]),
+    release(length(Casts), State),
+    [Pid ! {Cast, Reply} || Cast <- Casts],
+    ok.
+
+release(Cnt, #state {release_fun = ReleaseF}) when is_function(ReleaseF, 1) ->
+    ReleaseF(Cnt);
+release(_, _) ->
     ok.
 
 reply_all(Reply, #state {

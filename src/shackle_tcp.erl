@@ -14,7 +14,7 @@
     ok.
 
 close(Socket) ->
-    gen_tcp:close(Socket).
+    catch gen_tcp:close(Socket).
 
 -spec connect(inet_address(), inet_port(), socket_options()) ->
     {ok, socket()} | {error, atom()}.

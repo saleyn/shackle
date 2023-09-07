@@ -36,7 +36,9 @@
 %% <dl><dt></dt><dd>A list of replies</dd></dl>
 -spec batch_call(pool_name(), [term()]) ->
     [term()] | {error, term()}.
-batch_call(PoolName, Requests) ->
+batch_call(_, []) ->
+    [];
+batch_call(PoolName, [_|_] = Requests) ->
     batch_call(PoolName, Requests, ?DEFAULT_TIMEOUT).
 
 %% @doc Processes a list of requests.<p />
@@ -48,9 +50,11 @@ batch_call(PoolName, Requests) ->
 %% </dl>
 %%  Returns:
 %% <dl><dt></dt><dd>A list of replies</dd></dl>
--spec batch_call(atom(), [term()], timeout()) ->
+-spec batch_call(atom(), [term()], infinity | timeout()) ->
     [term() | {error, term()}].
-batch_call(PoolName, Requests, Timeout) ->
+batch_call(_, [], _) ->
+    [];
+batch_call(PoolName, [_|_] = Requests, Timeout) ->
     case batch_cast(PoolName, Requests, self(), Timeout) of
         {ok, {_BatchRef, _Count, RequestRefs} = BatchState} ->
             Replies = receive_batch_response(BatchState),
@@ -75,7 +79,9 @@ batch_call(PoolName, Requests, Timeout) ->
 %% <dl><dt></dt><dd>A list of replies</dd></dl>
 -spec batch_call_expect_ordered_replies(atom(), [request()]) ->
     [reply() | {error, term()} | {ok, no_reply}].
-batch_call_expect_ordered_replies(PoolName, Requests) ->
+batch_call_expect_ordered_replies(_, []) ->
+    [];
+batch_call_expect_ordered_replies(PoolName, [_|_] = Requests) ->
     batch_call_expect_ordered_replies(PoolName, Requests, ?DEFAULT_TIMEOUT).
 
 %% @doc Processes a list of requests.<br />
@@ -91,9 +97,12 @@ batch_call_expect_ordered_replies(PoolName, Requests) ->
 %% </dl>
 %%  Returns:
 %% <dl><dt></dt><dd>A list of replies</dd></dl>
--spec batch_call_expect_ordered_replies(atom(), [request()], timeout()) ->
+-spec batch_call_expect_ordered_replies(
+        atom(), [request()], infinity | timeout()) ->
     [reply() | {error, term()} | {ok, no_reply}].
-batch_call_expect_ordered_replies(PoolName, Requests, Timeout) ->
+batch_call_expect_ordered_replies(_, [], _) ->
+    [];
+batch_call_expect_ordered_replies(PoolName, [_|_] = Requests, Timeout) ->
     {ok, BatchState} = batch_cast(PoolName, Requests, self(), Timeout),
     receive_batch_expect_ordered_replies(BatchState).
 
@@ -107,7 +116,9 @@ batch_call_expect_ordered_replies(PoolName, Requests, Timeout) ->
 %% <dl><dt></dt><dd>The state of the list of requests being processed</dd></dl>
 -spec batch_cast(pool_name(), [term()]) ->
     {ok, batch_state()} | {error, atom()}.
-batch_cast(PoolName, Requests) ->
+batch_cast(_, []) ->
+    {error, empty};
+batch_cast(PoolName, [_|_] = Requests) ->
     batch_cast(PoolName, Requests, self()).
 
 %% @doc Processes a list of requests.<p />
@@ -121,7 +132,9 @@ batch_cast(PoolName, Requests) ->
 %% <dl><dt></dt><dd>The state of the list of requests being processed</dd></dl>
 -spec batch_cast(pool_name(), [term()], undefined | pid()) ->
     {ok, batch_state()} | {error, atom()}.
-batch_cast(PoolName, Requests, Pid) ->
+batch_cast(_, [], _) ->
+    {error, empty};
+batch_cast(PoolName, [_|_] = Requests, Pid) ->
     batch_cast(PoolName, Requests, Pid, ?DEFAULT_TIMEOUT).
 
 %% @doc Processes a list of requests.<p />
@@ -134,26 +147,26 @@ batch_cast(PoolName, Requests, Pid) ->
 %% </dl>
 %%  Returns:
 %% <dl><dt></dt><dd>The state of the list of requests being processed</dd></dl>
--spec batch_cast(pool_name(), [request()], undefined | pid(), timeout()) ->
+-spec batch_cast(
+        pool_name(), [request()], undefined | pid(), infinity | timeout()) ->
     {ok, batch_state()} | {error, atom()}.
-batch_cast(PoolName, Requests, Pid, Timeout) ->
+batch_cast(_, [], _, _) ->
+    {error, empty};
+batch_cast(PoolName, [_|_] = Requests, Pid, Timeout) ->
     Timestamp = os:timestamp(),
-    case shackle_pool:server(PoolName) of
-        {ok, Client, Server} ->
+    Count = length(Requests),
+    case shackle_pool:server(PoolName, Count) of
+        {ok, Client, Server, ReleaseFun} ->
             BatchRef = make_ref(),
-            {CastsRequestRefs, Count} = lists:mapfoldl(
-                fun(X, Acc) ->
-                    #cast{ request_id = {_, RequestRef}} = Cast =
-                        mk_cast(BatchRef, Client, Server, Pid,
-                            Timestamp, Timeout),
-                    {{Cast, {RequestRef, X}}, Acc+1}
-                end,
-                0, Requests
-            ),
+            CastsRequestRefs = [begin
+                #cast{ request_id = {_, RequestRef}} = Cast =
+                    mk_cast(BatchRef, Client, Server, Pid, Timestamp, Timeout),
+                {Cast, {RequestRef, Request}}
+            end || Request <- Requests],
             {Casts, RequestRefs} = lists:unzip(CastsRequestRefs),
             prometheus_counter:inc(
                 shackle_cast_total, [Client, PoolName], Count),
-            Server ! {Count, Requests, Casts},
+            Server ! {Count, Requests, Casts, ReleaseFun},
             {ok, {BatchRef, Count, RequestRefs}};
         {error, Reason} ->
             {error, Reason}
@@ -181,7 +194,7 @@ call(PoolName, Request) ->
 %% </dl>
 %%  Returns:
 %% <dl><dt></dt><dd>A reply</dd></dl>
--spec call(atom(), term(), timeout()) ->
+-spec call(atom(), term(), infinity | timeout()) ->
     term() | {error, atom()}.
 call(PoolName, Request, Timeout) ->
     case cast(PoolName, Request, self(), Timeout) of
@@ -228,15 +241,15 @@ cast(PoolName, Request, Pid) ->
 %% </dl>
 %%  Returns:
 %% <dl><dt></dt><dd>The request ID of the request being processed</dd></dl>
--spec cast(pool_name(), term(), undefined | pid(), timeout()) ->
+-spec cast(pool_name(), term(), undefined | pid(), infinity | timeout()) ->
     {ok, request_id()} | {error, atom()}.
 cast(PoolName, Request, Pid, Timeout) ->
     Timestamp = os:timestamp(),
     case shackle_pool:server(PoolName) of
-        {ok, Client, Server} ->
+        {ok, Client, Server, ReleaseFun} ->
             Cast = mk_cast(Client, Server, Pid, Timestamp, Timeout),
             prometheus_counter:inc(shackle_cast_total, [Client, PoolName]),
-            Server ! {Request, Cast},
+            Server ! {Request, Cast, ReleaseFun},
             RequestId = Cast#cast.request_id,
             {ok, RequestId};
         {error, Reason} ->

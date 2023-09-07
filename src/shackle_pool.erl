@@ -6,8 +6,6 @@
     {shackle_pool_foil, lookup, 1}
 ]).
 
--dialyzer([{nowarn_function, [options/1, server/3]}]).
-
 %% public
 -export([
     start/3,
@@ -19,6 +17,7 @@
 -export([
     init/0,
     server/1,
+    server/2,
     terminate/0
 ]).
 
@@ -69,12 +68,23 @@ init() ->
     foil:load(?MODULE).
 
 -spec server(pool_name()) ->
-    {ok, client(), atom()} |
+    {ok, client(), atom(), release_fun()} |
     {error, pool_not_started | no_server | shackle_not_started}.
 server(Name) ->
     case options(Name) of
         {ok, #pool_options{max_retries = MaxRetries} = Options} ->
-            server(Name, Options, MaxRetries + 1);
+            server(Name, 1, Options, MaxRetries + 1);
+        {error, Reson} ->
+            {error, Reson}
+    end.
+
+-spec server(pool_name(), pos_integer()) ->
+    {ok, client(), atom(), release_fun()} |
+    {error, pool_not_started | no_server | shackle_not_started}.
+server(Name, Count) ->
+    case options(Name) of
+        {ok, #pool_options{max_retries = MaxRetries} = Options} ->
+            server(Name, Count, Options, MaxRetries + 1);
         {error, Reson} ->
             {error, Reson}
     end.
@@ -85,7 +95,7 @@ terminate() ->
 
 %% private
 cleanup(Name, OptionsRec) ->
-    shackle_backlog:delete(Name),
+    shackle_sema:delete(Name),
     shackle_queue:delete(Name),
     shackle_status:delete(Name),
     cleanup_ets(Name, OptionsRec),
@@ -99,7 +109,6 @@ cleanup_ets(_Name, _OptionsRec) ->
 cleanup_foil(Name, #pool_options{pool_size = PoolSize}) ->
     foil:delete(?MODULE, Name),
     [foil:delete(?MODULE, {Name, N}) || N <- lists:seq(1, PoolSize)],
-    foil:delete(?MODULE, {Name, backlog}),
     foil:load(?MODULE).
 
 options(Name) ->
@@ -127,13 +136,14 @@ options_rec(Client, Options) ->
         pool_strategy = PoolStrategy
     }.
 
-server(Name, #pool_options{ client = Client }, 0) ->
+server(Name, _Count, #pool_options{ client = Client }, 0) ->
     prometheus_counter:inc(shackle_error_total, [
         Client, Name, <<"undefined">>, <<"no server">>
     ]),
     {error, no_server};
 server(
     Name,
+    Count,
     #pool_options{
         backlog_size = BacklogSize,
         client = Client,
@@ -142,27 +152,29 @@ server(
     } = Options,
     N
 ) ->
-    ServerId = {_, ServerIdx} = server_id(Name, PoolSize, PoolStrategy),
+    ServerId = {Name, ServerIdx} = server_id(Name, PoolSize, PoolStrategy),
     case shackle_status:active(ServerId) of
+        true when BacklogSize =:= infinity ->
+            {ok, ServerName} = shackle_pool_foil:lookup(ServerId),
+            {ok, Client, ServerName, undefined};
         true ->
-            {ok, Backlog} = shackle_pool_foil:lookup({Name, backlog}),
-            case shackle_backlog:check(Backlog, ServerId, BacklogSize) of
-                true ->
+            case shackle_sema:acquire_n(ServerId, Count) of
+                {ok, ReleaseFun} ->
                     {ok, ServerName} = shackle_pool_foil:lookup(ServerId),
-                    {ok, Client, ServerName};
-                false ->
+                    {ok, Client, ServerName, ReleaseFun};
+                error ->
                     prometheus_counter:inc(shackle_error_total, [
                         Client, Name, integer_to_binary(ServerIdx),
                         <<"backlog full">>
                     ]),
-                    server(Name, Options, N - 1)
+                    server(Name, Count, Options, N - 1)
             end;
         false ->
             prometheus_counter:inc(shackle_error_total, [
                 Client, Name, integer_to_binary(ServerIdx),
                 <<"disabled">>
             ]),
-            server(Name, Options, N - 1)
+            server(Name, Count, Options, N - 1)
     end.
 
 server_id(Name, PoolSize, random) ->
@@ -173,9 +185,13 @@ server_id(Name, PoolSize, round_robin) ->
     [ServerId] = ets:update_counter(?ETS_TABLE_POOL_INDEX, Key, UpdateOps),
     {Name, ServerId}.
 
-setup(Name, #pool_options {pool_size = PoolSize} = OptionsRec) ->
+setup(Name, #pool_options {
+        backlog_size = BacklogSize,
+        pool_size = PoolSize
+    } = OptionsRec) ->
+
     shackle_metrics:init(),
-    shackle_backlog:new(Name),
+    shackle_sema:new(Name, PoolSize, BacklogSize),
     shackle_queue:new(Name),
     shackle_status:new(Name, PoolSize),
     setup_ets(Name, OptionsRec),
@@ -192,7 +208,6 @@ setup_foil(Name, #pool_options{pool_size = PoolSize} = OptionsRec) ->
         foil:insert(?MODULE, {Name, N}, server_name(Name, N))
         || N <- lists:seq(1, PoolSize)
     ],
-    foil:insert(?MODULE, {Name, backlog}, shackle_backlog:table_name(Name)),
     foil:load(?MODULE).
 
 server_name(Name, Index) ->
@@ -204,52 +219,18 @@ server_spec(Name, Index, Client, ClientOptions) ->
     StartFunc = {?SERVER, start_link, [ServerName, ServerOpts]},
     {ServerName, StartFunc, permanent, 5000, worker, [?SERVER]}.
 
-start_children(
-    Name,
-    Client,
-    ClientOptions,
-    PoolOptions = #pool_options{
-        pool_size = PoolSize
-    }
-) ->
+start_children(Name, Client, ClientOptions,
+        #pool_options{pool_size = PoolSize}) ->
     Servers = [
         server_spec(Name, Index, Client, ClientOptions)
         || Index <- lists:seq(1, PoolSize)
     ],
-    ServerMonitor = server_monitor_spec(Name, PoolOptions),
-    WithMonitor = [ServerMonitor | Servers],
-    [supervisor:start_child(?SUPERVISOR, Child) || Child <- WithMonitor].
+    [supervisor:start_child(?SUPERVISOR, Child) || Child <- Servers].
 
-stop_children(Name, []) ->
-    MonitorName = server_monitor_name(Name),
-    supervisor:terminate_child(?SUPERVISOR, MonitorName),
-    supervisor:delete_child(?SUPERVISOR, MonitorName),
+stop_children(_, []) ->
     ok;
 stop_children(Name, [Index | T]) ->
     ServerName = server_name(Name, Index),
     supervisor:terminate_child(?SUPERVISOR, ServerName),
     supervisor:delete_child(?SUPERVISOR, ServerName),
     stop_children(Name, T).
-
-server_monitor_spec(
-    Name,
-    #pool_options{pool_size = PoolSize, backlog_size = BacklogSize}
-) ->
-    MonitorName = server_monitor_name(Name),
-    Servers = [
-        {server_name(Name, Index), {Name, Index}}
-        || Index <- lists:seq(1, PoolSize)
-    ],
-    MonitorOptions = {Name, Servers, BacklogSize},
-    Start = {shackle_server_monitor, start_link, [MonitorName, MonitorOptions]},
-    #{
-        id => MonitorName,
-        start => Start,
-        restart => permanent,
-        shutdown => 5000,
-        type => worker,
-        modules => [MonitorName]
-    }.
-
-server_monitor_name(Name) ->
-    list_to_atom(atom_to_list(Name) ++ "_server_monitor").

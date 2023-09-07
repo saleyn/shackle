@@ -4,6 +4,7 @@
 -include("shackle_defaults.hrl").
 
 -define(N, 1000).
+-define(LONG_TEST_BACKLOG_SIZE, 90_000).
 -define(LONG_TEST_TIMEOUT, 60).
 -define(LONG_TEST_POOL_SIZE, 16).
 
@@ -298,6 +299,7 @@ shackle_round_robin_batch_cast_test_() ->
     {setup,
         fun () ->
             setup(?CLIENT_TCP, [
+                {backlog_size, ?LONG_TEST_BACKLOG_SIZE},
                 {pool_size, ?LONG_TEST_POOL_SIZE},
                 {pool_strategy, round_robin}
             ])
@@ -316,6 +318,7 @@ shackle_random_batch_cast_test_() ->
     {setup,
         fun () ->
             setup(?CLIENT_TCP, [
+                {backlog_size, ?LONG_TEST_BACKLOG_SIZE},
                 {pool_size, ?LONG_TEST_POOL_SIZE},
                 {pool_strategy, random}
             ])
@@ -334,6 +337,7 @@ shackle_round_robin_batch_cast_partial_test_() ->
     {setup,
         fun () ->
             setup(?CLIENT_TCP, [
+                {backlog_size, ?LONG_TEST_BACKLOG_SIZE},
                 {pool_size, ?LONG_TEST_POOL_SIZE},
                 {pool_strategy, round_robin}
             ])
@@ -352,6 +356,7 @@ shackle_random_batch_cast_partial_test_() ->
     {setup,
         fun () ->
             setup(?CLIENT_TCP, [
+                {backlog_size, ?LONG_TEST_BACKLOG_SIZE},
                 {pool_size, ?LONG_TEST_POOL_SIZE},
                 {pool_strategy, random}
             ])
@@ -409,6 +414,7 @@ shackle_round_robin_batch_expect_ordered_test_() ->
     {setup,
         fun () ->
             setup(?CLIENT_TCP, [
+                {backlog_size, ?LONG_TEST_BACKLOG_SIZE},
                 {pool_size, ?LONG_TEST_POOL_SIZE},
                 {pool_strategy, round_robin}
             ])
@@ -427,6 +433,7 @@ shackle_random_batch_expect_ordered_test_() ->
     {setup,
         fun () ->
             setup(?CLIENT_TCP, [
+                {backlog_size, ?LONG_TEST_BACKLOG_SIZE},
                 {pool_size, ?LONG_TEST_POOL_SIZE},
                 {pool_strategy, random}
             ])

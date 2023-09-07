@@ -25,7 +25,7 @@
 %% types
 -type backlog_size() :: pos_integer() | infinity.
 -type batch_ref() :: undefined | reference().
--type batch_state() :: {batch_ref(), non_neg_integer(), [{request_ref(), term()}]}.
+-type batch_state() :: {batch_ref(), pos_integer(), [{request_ref(), term()}]}.
 -type cast() :: #cast {}.
 -type client() :: module().
 -type client_option() :: {address, inet_address()} |
@@ -58,8 +58,9 @@
 -type pool_options_rec() :: #pool_options {}.
 -type pool_size() :: pos_integer().
 -type pool_strategy() :: random | round_robin.
--type protocol() :: shackle_ssl| shackle_tcp | shackle_udp.
+-type protocol() :: shackle_ssl | shackle_tcp | shackle_udp.
 -type reconnect_state() :: #reconnect_state {}.
+-type release_fun() :: fun((Cnt :: pos_integer()) -> sema_nif:vacate_ret()).
 -type reply() :: term().
 -type request_id() :: {server_name(), request_ref()}.
 -type request_ref() :: reference().

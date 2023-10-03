@@ -15,7 +15,7 @@
  {<<"quantile_estimator">>,{pkg,<<"quantile_estimator">>,<<"0.2.1">>},1},
  {<<"sema_nif">>,
   {git,"https://github.com/x0id/erlsem.git",
-       {ref,"d50cc415faf86de1d01020f50a1932f705af6f92"}},
+       {ref,"69469611f1e089a29fa3a730b2d13bbf2b87b5bc"}},
   0}]}.
 [
 {pkg_hash,[

@@ -17,7 +17,7 @@
 run() ->
     error_logger:tty(false),
     {ok, _} = shackle_app:start(),
-    io:format("Running benchmark...~n~n" ++
+    io:format("Running benchmark...~n~n"
         "PoolSize  Concurency  Requests/s  Error %~n" ++
         [$= || _ <- lists:seq(1, 49)] ++ "~n", []),
     run_pool_size(?POOL_SIZES, ?CONCURENCIES, ?N).

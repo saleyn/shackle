@@ -1,5 +1,6 @@
 -include("shackle.hrl").
 -include("shackle_defaults.hrl").
+-include_lib("kernel/include/logger.hrl").
 
 %% macros
 -define(APP, shackle).
@@ -12,7 +13,7 @@
 -define(MSG_CONNECT, connect).
 -define(SERVER, shackle_server).
 -define(SUPERVISOR, shackle_sup).
--define(WARN(PoolName, Format, Data), shackle_utils:warning_msg(PoolName, Format, Data)).
+-define(WARN(PoolName, Format, Data), ?LOG_WARNING("[~p] " ++ Format, [PoolName | Data])).
 
 %% ETS tables
 -define(ETS_TABLE_POOL_INDEX, shackle_pool_index).

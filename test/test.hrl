@@ -2,7 +2,9 @@
 -define(CLIENT_SSL, arithmetic_ssl_client).
 -define(CLIENT_TCP, arithmetic_tcp_client).
 -define(CLIENT_UDP, arithmetic_udp_client).
--define(POOL_NAME, arithmetic).
+-define(POOL_NAME_SSL, arithmetic_ssl).
+-define(POOL_NAME_TCP, arithmetic_tcp).
+-define(POOL_NAME_UDP, arithmetic_udp).
 -define(POOL_SIZE, 16).
 -define(PORT, 62169).
--define(TIMEOUT, 500).
+-define(TIMEOUT, 750).

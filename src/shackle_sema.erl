@@ -3,15 +3,19 @@
 -export([
     acquire/1,
     acquire/2,
-    acquire_n/2,
-    acquire_n/3,
+    acquire/3,
+    release/2,
     delete/1,
-    new/3
+    new/3,
+    count/2,
+    count/1
 ]).
 
--type release_fun() :: fun((Cnt :: pos_integer()) -> sema_nif:vacate_ret()).
+-compile({inline, [acquire/1, acquire/2, acquire/3, release/2]}).
 
--export_type([release_fun/0]).
+-type sema_ref() :: sema_nif:sema_ref().
+
+-export_type([sema_ref/0]).
 
 -spec new(shackle_pool:name(), pos_integer(), pos_integer()) ->
     ok.
@@ -22,38 +26,45 @@ new(PoolName, PoolSize, BacklogSize) ->
     SemaList = [sema_nif:create(BacklogSize) || _ <- lists:seq(1, PoolSize)],
     persistent_term:put({sema, PoolName}, list_to_tuple(SemaList)).
 
--spec acquire(shackle_server:id()) -> {ok, release_fun()} | error.
+-spec acquire(shackle_server:id()) -> {ok, sema_ref()} | error.
+acquire({PoolName, ServerIdx}) ->
+    acquire(PoolName, ServerIdx, 1).
 
-acquire(ServerId) -> acquire_n(ServerId, 1).
+-spec acquire(shackle_pool:name(), shackle_server:index()) -> {ok, sema_ref()} | error.
+acquire(PoolName, ServerIdx) ->
+    acquire(PoolName, ServerIdx, 1).
 
--spec acquire_n(shackle_server:id(), pos_integer()) -> {ok, release_fun()} | error.
+-spec acquire(shackle_pool:name(), shackle_server:index(), pos_integer()) ->
+    {ok, sema_ref()} | error.
 
-acquire_n({PoolName, ServerIdx}, Count) ->
+acquire(PoolName, ServerIdx, Count) ->
     Sema = element(ServerIdx, persistent_term:get({sema, PoolName})),
-    case sema_nif:occupy(Sema, Count) of
+    case sema_nif:acquire(Sema, Count) of
         {ok, _} ->
-            Pid = self(),
-            {ok, fun (Cnt) -> sema_nif:vacate(Sema, Cnt, Pid) end};
-        {error, backlog_full} ->
+            {ok, Sema};
+        {error, full} ->
             error
     end.
 
--spec acquire(shackle_pool:name(), shackle_server:index()) -> {ok, release_fun()} | error.
+-spec release(sema_ref()|undefined, pid()) -> ok.
+%% When backlog_size is infinity, `Sema' is `undefined' - there's nothing to do.
+release(undefined, _Pid) ->
+    ok;
+release(Sema, Pid) when is_reference(Sema) ->
+    sema_nif:release(Sema, 1, Pid),
+    ok.
 
-acquire(PoolName, ServerIdx) -> acquire_n(PoolName, ServerIdx, 1).
+%% @doc Return the size of current backlog
+-spec count({shackle_pool:name(), non_neg_integer()}) -> non_neg_integer().
+count({PoolName, ServerIdx}) ->
+    count(PoolName, ServerIdx).
 
--spec acquire_n(shackle_pool:name(), shackle_server:index(), pos_integer()) ->
-    {ok, release_fun()} | error.
-
-acquire_n(PoolName, ServerIdx, Count) ->
+%% @doc Return the size of current backlog
+-spec count(shackle_pool:name(), non_neg_integer()) -> non_neg_integer().
+count(PoolName, ServerIdx) ->
     Sema = element(ServerIdx, persistent_term:get({sema, PoolName})),
-    case sema_nif:occupy(Sema, Count) of
-        {ok, _} ->
-            Pid = self(),
-            {ok, fun (Cnt) -> sema_nif:vacate(Sema, Cnt, Pid) end};
-        {error, backlog_full} ->
-            error
-    end.
+    #{cnt := Count} = sema_nif:info(Sema),
+    Count.
 
 -spec delete(shackle_pool:name()) ->
     ok.

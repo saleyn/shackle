@@ -7,7 +7,9 @@
     noop/0,
     start/0,
     start/1,
-    stop/0
+    start/2,
+    stop/0,
+    wait_until_all_available/1
 ]).
 
 -behavior(shackle_client).
@@ -28,23 +30,28 @@
 -type tiny_int() :: 0..255.
 
 %% public
+
+-spec wait_until_all_available(non_neg_integer()) -> boolean().
+wait_until_all_available(Timeout) ->
+    shackle_pool:wait_until_all_available(?POOL_NAME_SSL, Timeout).
+
 -spec add(tiny_int(), tiny_int()) ->
     pos_integer().
 
 add(A, B) ->
-    shackle:call(?POOL_NAME, {add, A, B}, ?TIMEOUT).
+    shackle:call(?POOL_NAME_SSL, {add, A, B}, ?TIMEOUT, infinity).
 
 -spec multiply(tiny_int(), tiny_int()) ->
     pos_integer().
 
 multiply(A, B) ->
-    shackle:call(?POOL_NAME, {multiply, A, B}, ?TIMEOUT).
+    shackle:call(?POOL_NAME_SSL, {multiply, A, B}, ?TIMEOUT).
 
 -spec noop() ->
     ok.
 
 noop() ->
-    shackle:call(?POOL_NAME, noop).
+    shackle:call(?POOL_NAME_SSL, noop).
 
 -spec start() ->
     ok | {error, shackle_not_started | pool_already_started}.
@@ -57,17 +64,22 @@ start() ->
 
 -spec start(shackle_pool:options()) ->
     ok | {error, shackle_not_started | pool_already_started}.
-
 start(PoolOptions) ->
-    shackle_pool:start(?POOL_NAME, ?CLIENT_SSL, [
+    start(PoolOptions, []).
+
+-spec start(shackle_pool:options(), shackle_client:options()) ->
+    ok | {error, shackle_not_started | pool_already_started}.
+start(PoolOptions, ClientOptions) ->
+    shackle_pool:start(?POOL_NAME_SSL, ?CLIENT_SSL, ClientOptions ++ [
         {port, ?PORT},
-        {protocol, shackle_ssl},
         {reconnect, true},
         {reconnect_time_min, 1},
+        {protocol, shackle_ssl},
         {socket_options, [
             binary,
             {packet, raw},
-            {verify, verify_none}
+            {verify, verify_none},
+            {depth, 3}
         ]}
     ], PoolOptions).
 
@@ -75,7 +87,7 @@ start(PoolOptions) ->
     ok | {error, pool_not_started}.
 
 stop() ->
-    shackle_pool:stop(?POOL_NAME).
+    shackle_pool:stop(?POOL_NAME_SSL).
 
 %% shackle_server callbacks
 init(_) ->

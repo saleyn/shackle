@@ -11,7 +11,8 @@
     new/1,
     remove/3,
     table_name/1,
-    pending/2
+    pending/2,
+    length/1
 ]).
 
 %% internal
@@ -43,12 +44,13 @@ delete(PoolName) ->
     ok.
 
 -spec new(shackle_pool:name()) ->
-    ok.
+    atom().
 
 new(PoolName) ->
-    Table = ets:new(table_name(PoolName), shackle_utils:ets_options()),
-    ets:give_away(Table, whereis(shackle_ets_manager), undefined),
-    ok.
+    TabName = table_name(PoolName),
+    TabName = ets:new(TabName, shackle_utils:ets_options()),
+    ets:give_away(TabName, whereis(shackle_ets_manager), undefined),
+    TabName.
 
 -spec remove(shackle:table(), shackle_server:id(), shackle:external_request_id()) ->
     {ok, shackle:cast(), reference()} | {error, not_found}.
@@ -66,6 +68,11 @@ remove(Table, ServerId, ExtRequestId) ->
 pending(Table, ServerId) ->
     Match = {{ServerId, '_'}, '_'},
     ets:match_object(Table, Match).
+
+%% @doc Return the current length of the pending queue
+-spec length(Table :: shackle:table()) -> non_neg_integer().
+length(Table) ->
+    ets:info(Table, size).
 
 %% private
 ets_match_take(Table, Match) ->

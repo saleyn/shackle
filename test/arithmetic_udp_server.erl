@@ -42,8 +42,12 @@ loop(Socket) ->
     case gen_udp:recv(Socket, 0) of
         {ok, {{127, 0, 0, 1}, Port, Request}} ->
             {Reply, <<>>} = arithmetic_protocol:parse_requests(Request),
-            ok = gen_udp:send(Socket, "127.0.0.1", Port, Reply),
-            loop(Socket);
+            case gen_udp:send(Socket, "127.0.0.1", Port, Reply) of
+                ok ->
+                    loop(Socket);
+                {error, _} ->
+                    ok
+            end;
         {error, closed} ->
             ok
     end.

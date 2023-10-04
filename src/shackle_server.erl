@@ -16,35 +16,50 @@
 ]).
 
 -record(state, {
-    address          :: inet_address(),
-    client           :: client(),
-    id               :: server_id(),
+    address          :: shackle:inet_address(),
+    client           :: shackle:client(),
+    id               :: id(),
     init_options     :: init_options(),
-    name             :: server_name(),
+    name             :: name(),
     parent           :: pid(),
-    pool_name        :: pool_name(),
-    port             :: inet_port(),
-    protocol         :: protocol(),
-    queue            :: table(),
+    pool_name        :: shackle_pool:name(),
+    port             :: shackle:inet_port(),
+    protocol         :: shackle:protocol(),
+    queue            :: shackle:table(),
     reconnect_state  :: undefined | reconnect_state(),
-    release_fun      :: undefined | release_fun(),
-    socket           :: undefined | socket(),
-    socket_options   :: socket_options(),
+    release_fun      :: undefined | shackle_sema:release_fun(),
+    socket           :: undefined | shackle:socket(),
+    socket_options   :: shackle:socket_options(),
     timer_ref        :: undefined | reference()
 
 }).
 
 -type state() :: #state {}.
+-type client_state() :: term().
+-type init_options() :: term().
+-type id() :: {shackle_pool:name(), index()}.
+-type index() :: pos_integer().
+-type name() :: atom().
+-type opts() :: {shackle_pool:name(), index(), shackle:client(), shackle_client:options()}.
+-type reconnect_state() :: #reconnect_state{}.
+
+-export_type([
+    id/0,
+    index/0,
+    init_options/0,
+    name/0,
+    reconnect_state/0
+]).
 
 %% public
--spec start_link(server_name(), server_opts()) ->
+-spec start_link(name(), opts()) ->
     {ok, pid()}.
 
 start_link(Name, Opts) ->
     metal:start_link(?MODULE, Name, Opts).
 
 %% metal callbacks
--spec init(server_name(), pid(), server_opts()) ->
+-spec init(name(), pid(), opts()) ->
     no_return().
 
 init(Name, Parent, Opts) ->
@@ -304,13 +319,7 @@ handle_msg({timeout, ExtRequestId}, {#state {
             end,
             {ok, {State, ClientState}}
     end;
-handle_msg(
-    Msg,
-    {#state{
-            pool_name = PoolName
-        } = State,
-        ClientState}
-) ->
+handle_msg(Msg, {#state{pool_name = PoolName} = State, ClientState}) ->
     ?WARN(PoolName, "unknown msg: ~p", [Msg]),
     {ok, {State, ClientState}}.
 

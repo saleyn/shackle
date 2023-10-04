@@ -1,10 +1,7 @@
 -module(shackle_hooks).
 -include("shackle_internal.hrl").
 
--ignore_xref([
-    {shackle_hooks_foil, lookup, 1}
-]).
-
+-ignore_xref([{shackle_hooks_foil, lookup, 1}]).
 -dialyzer([{nowarn_function, [metrics/4]}]).
 
 -compile(inline).
@@ -18,7 +15,7 @@
 %% callbacks
 -optional_callbacks([metrics/4]).
 
--callback metrics(client(), metric_type(), metric_key(), metric_value()) ->
+-callback metrics(shackle:client(), shackle:metric_type(), shackle:metric_key(), shackle:metric_value()) ->
     ok.
 
 %% public
@@ -33,7 +30,7 @@ init() ->
     foil:load(?MODULE),
     ok.
 
--spec metrics(client(), metric_type(), metric_key(), metric_value()) ->
+-spec metrics(shackle:client(), shackle:metric_type(), shackle:metric_key(), shackle:metric_value()) ->
     ok.
 
 metrics(Client, Type, Key, Value) ->

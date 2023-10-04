@@ -13,8 +13,11 @@
 start() ->
     case whereis(?MODULE) of
         undefined ->
-            spawn(fun () -> loop(open()) end),
-            ok;
+            Self = self(),
+            spawn(fun () -> Sock = open(), Self ! ready, loop(Sock) end),
+            receive
+                ready -> ok
+            end;
         _Socket ->
             {error, already_started}
     end.

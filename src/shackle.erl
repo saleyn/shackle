@@ -23,6 +23,50 @@
     receive_response/1
 ]).
 
+%% types
+-type batch_ref() :: undefined | reference().
+-type batch_state() :: {batch_ref(), pos_integer(), [{request_ref(), term()}]}.
+-type cast() :: #cast {}.
+-type client() :: module().
+-type external_request_id() :: term().
+-type inet_address() :: inet:ip_address() | inet:hostname().
+-type inet_port() :: inet:port_number().
+-type protocol() :: shackle_ssl| shackle_tcp | shackle_udp.
+-type request_id() :: {shackle_server:name(), reference()}.
+-type request_ref() :: reference().
+-type reply() :: term().
+-type response() :: {external_request_id(), term()}.
+-type socket() :: inet:socket() | ssl:sslsocket().
+-type socket_option() :: gen_tcp:connect_option() | gen_udp:option() | ssl:tls_client_option().
+-type socket_options() :: [socket_option()].
+-type table() :: atom().
+-type time() :: pos_integer().
+-type metric_type() :: counter | timing.
+-type metric_key() :: iodata().
+-type metric_value() :: integer().
+
+-export_type([
+    batch_ref/0,
+    batch_state/0,
+    cast/0,
+    client/0,
+    external_request_id/0,
+    inet_address/0,
+    inet_port/0,
+    metric_type/0,
+    metric_key/0,
+    metric_value/0,
+    protocol/0,
+    request_id/0,
+    request_ref/0,
+    reply/0,
+    response/0,
+    socket/0,
+    socket_options/0,
+    table/0,
+    time/0
+]).
+
 -type request() :: term().
 
 %% public
@@ -34,7 +78,7 @@
 %% </dl>
 %%  Returns:
 %% <dl><dt></dt><dd>A list of replies</dd></dl>
--spec batch_call(pool_name(), [term()]) ->
+-spec batch_call(shackle_pool:name(), [term()]) ->
     [term()] | {error, term()}.
 batch_call(_, []) ->
     [];
@@ -114,7 +158,7 @@ batch_call_expect_ordered_replies(PoolName, [_|_] = Requests, Timeout) ->
 %% </dl>
 %%  Returns:
 %% <dl><dt></dt><dd>The state of the list of requests being processed</dd></dl>
--spec batch_cast(pool_name(), [term()]) ->
+-spec batch_cast(shackle_pool:name(), [term()]) ->
     {ok, batch_state()} | {error, atom()}.
 batch_cast(_, []) ->
     {error, empty};
@@ -130,7 +174,7 @@ batch_cast(PoolName, [_|_] = Requests) ->
 %% </dl>
 %%  Returns:
 %% <dl><dt></dt><dd>The state of the list of requests being processed</dd></dl>
--spec batch_cast(pool_name(), [term()], undefined | pid()) ->
+-spec batch_cast(shackle_pool:name(), [term()], undefined | pid()) ->
     {ok, batch_state()} | {error, atom()}.
 batch_cast(_, [], _) ->
     {error, empty};
@@ -148,7 +192,7 @@ batch_cast(PoolName, [_|_] = Requests, Pid) ->
 %%  Returns:
 %% <dl><dt></dt><dd>The state of the list of requests being processed</dd></dl>
 -spec batch_cast(
-        pool_name(), [request()], undefined | pid(), infinity | timeout()) ->
+        shackle_pool:name(), [request()], undefined | pid(), infinity | timeout()) ->
     {ok, batch_state()} | {error, atom()}.
 batch_cast(_, [], _, _) ->
     {error, empty};
@@ -180,7 +224,7 @@ batch_cast(PoolName, [_|_] = Requests, Pid, Timeout) ->
 %% </dl>
 %%  Returns:
 %% <dl><dt></dt><dd>A reply</dd></dl>
--spec call(pool_name(), term()) ->
+-spec call(shackle_pool:name(), term()) ->
     term() | {error, term()}.
 call(PoolName, Request) ->
     call(PoolName, Request, ?DEFAULT_TIMEOUT).
@@ -212,7 +256,7 @@ call(PoolName, Request, Timeout) ->
 %% </dl>
 %%  Returns:
 %% <dl><dt></dt><dd>The request ID of the request being processed</dd></dl>
--spec cast(pool_name(), term()) ->
+-spec cast(shackle_pool:name(), term()) ->
     {ok, request_id()} | {error, atom()}.
 cast(PoolName, Request) ->
     cast(PoolName, Request, self()).
@@ -226,7 +270,7 @@ cast(PoolName, Request) ->
 %% </dl>
 %%  Returns:
 %% <dl><dt></dt><dd>The request ID of the request being processed</dd></dl>
--spec cast(pool_name(), term(), undefined | pid()) ->
+-spec cast(shackle_pool:name(), term(), undefined | pid()) ->
     {ok, request_id()} | {error, atom()}.
 cast(PoolName, Request, Pid) ->
     cast(PoolName, Request, Pid, ?DEFAULT_TIMEOUT).
@@ -241,7 +285,7 @@ cast(PoolName, Request, Pid) ->
 %% </dl>
 %%  Returns:
 %% <dl><dt></dt><dd>The request ID of the request being processed</dd></dl>
--spec cast(pool_name(), term(), undefined | pid(), infinity | timeout()) ->
+-spec cast(shackle_pool:name(), term(), undefined | pid(), infinity | timeout()) ->
     {ok, request_id()} | {error, atom()}.
 cast(PoolName, Request, Pid, Timeout) ->
     Timestamp = os:timestamp(),

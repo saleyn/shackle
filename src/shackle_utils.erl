@@ -1,5 +1,4 @@
 -module(shackle_utils).
--include("shackle_internal.hrl").
 
 -compile(inline).
 -compile({inline_size, 512}).
@@ -7,6 +6,7 @@
 %% public
 -export([
     ets_options/0,
+    info_msg/3,
     lookup/3,
     random/1,
     random_element/1,
@@ -36,6 +36,11 @@ ets_options() -> [
 
 -endif.
 
+-spec info_msg(shackle_pool:name(), string(), [term()]) ->
+    ok.
+
+info_msg(Pool, Format, Data) ->
+    error_logger:info_msg("[~p] " ++ Format, [Pool | Data]).
 
 -spec lookup(atom(), [{atom(), term()}], term()) ->
     term().
@@ -62,7 +67,7 @@ random_element([_|_] = List) ->
     T = list_to_tuple(List),
     element(random(tuple_size(T)), T).
 
--spec warning_msg(pool_name(), string(), [term()]) ->
+-spec warning_msg(shackle_pool:name(), string(), [term()]) ->
     ok.
 
 warning_msg(Pool, Format, Data) ->

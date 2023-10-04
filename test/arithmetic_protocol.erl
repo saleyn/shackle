@@ -24,7 +24,7 @@ opcode(multiply) -> 2;
 opcode(noop) -> 3;
 opcode(modulo) -> 4.
 
--spec parse_replies(binary()) -> {[response()], binary()}.
+-spec parse_replies(binary()) -> {[shackle:response()], binary()}.
 
 parse_replies(Data) ->
     parse_replies(Data, []).

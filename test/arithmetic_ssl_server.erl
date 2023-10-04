@@ -14,8 +14,11 @@
 start() ->
     case whereis(?MODULE) of
         undefined ->
-            spawn(fun () -> accept(listen()) end),
-            ok;
+            Self = self(),
+            spawn(fun () -> Sock = listen(), Self ! ready, accept(Sock) end),
+            receive
+                ready -> ok
+            end;
         _Pid ->
             {error, already_started}
     end.
@@ -69,7 +72,8 @@ listen() ->
             {active, false},
             {reuseaddr, true},
             {certfile, <<"./test/cert.pem">>},
-            {keyfile, <<"./test/key.pem">>}
+            {keyfile, <<"./test/key.pem">>},
+            {verify, verify_none}
         ],
         {ok, LSocket} = ssl:listen(?PORT, Options),
         Self ! LSocket,

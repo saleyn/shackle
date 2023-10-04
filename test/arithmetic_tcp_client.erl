@@ -1,3 +1,5 @@
+
+
 -module(arithmetic_tcp_client).
 -include("test.hrl").
 -include_lib("shackle/include/shackle.hrl").
@@ -89,7 +91,7 @@ start() ->
         {pool_size, 1}
     ]).
 
--spec start(pool_options()) ->
+-spec start(shackle_pool:options()) ->
     ok | {error, shackle_not_started | pool_already_started}.
 
 start(PoolOptions) ->

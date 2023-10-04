@@ -2,6 +2,8 @@
 
 -include("shackle_internal.hrl").
 
+-dialyzer({nowarn_function, options/1}).
+-dialyzer({nowarn_function, server/4}).
 -ignore_xref([
     {shackle_pool_foil, lookup, 1}
 ]).
@@ -21,13 +23,39 @@
     terminate/0
 ]).
 
+%% records
+-record(pool_options, {
+    backlog_size  :: shackle_backlog:backlog_size(),
+    client        :: shackle:client(),
+    max_retries   :: max_retries(),
+    pool_size     :: pool_size(),
+    pool_strategy :: pool_strategy()
+}).
+
+%% types
+-type max_retries() :: non_neg_integer().
+-type name() :: atom().
+-type pool_size() :: pos_integer().
+-type pool_strategy() :: random | round_robin.
+-type option() :: {backlog_size, shackle_backlog:backlog_size()} |
+                  {max_retries, max_retries()} |
+                  {pool_size, pool_size()} |
+                  {pool_strategy, pool_strategy()}.
+-type options() :: [option()].
+
+-export_type([
+    name/0,
+    options/0,
+    pool_size/0
+]).
+
 %% public
--spec start(pool_name(), client(), client_options()) ->
+-spec start(shackle_pool:name(), shackle:client(), shackle_client:options()) ->
     ok | {error, shackle_not_started | pool_already_started}.
 start(Name, Client, ClientOptions) ->
     start(Name, Client, ClientOptions, []).
 
--spec start(pool_name(), client(), client_options(), pool_options()) ->
+-spec start(shackle_pool:name(), shackle:client(), shackle_client:options(), options()) ->
     ok | {error, shackle_not_started | pool_already_started}.
 start(Name, Client, ClientOptions, Options) ->
     case options(Name) of
@@ -42,11 +70,10 @@ start(Name, Client, ClientOptions, Options) ->
             ok
     end.
 
--spec stop(pool_name()) -> ok | {error, shackle_not_started | pool_not_started}.
+-spec stop(shackle_pool:name()) -> ok | {error, shackle_not_started | pool_not_started}.
 stop(Name) ->
     case options(Name) of
-        {ok,
-            #pool_options{
+        {ok, #pool_options{
                 pool_size = PoolSize
             } = OptionsRec} ->
             stop_children(Name, lists:seq(1, PoolSize)),
@@ -57,7 +84,8 @@ stop(Name) ->
     end.
 
 %% internal
--spec init() -> ok.
+-spec init() ->
+    ok.
 init() ->
     ets:new(?ETS_TABLE_POOL_INDEX, [
         named_table,
@@ -67,8 +95,8 @@ init() ->
     foil:new(?MODULE),
     foil:load(?MODULE).
 
--spec server(pool_name()) ->
-    {ok, client(), atom(), release_fun()} |
+-spec server(shackle_pool:name()) ->
+    {ok, shackle:client(), atom(), shackle_sema:release_fun()} |
     {error, pool_not_started | no_server | shackle_not_started}.
 server(Name) ->
     case options(Name) of
@@ -78,8 +106,8 @@ server(Name) ->
             {error, Reson}
     end.
 
--spec server(pool_name(), pos_integer()) ->
-    {ok, client(), atom(), release_fun()} |
+-spec server(shackle_pool:name(), pos_integer()) ->
+    {ok, shackle:client(), atom(), shackle_sema:release_fun()} |
     {error, pool_not_started | no_server | shackle_not_started}.
 server(Name, Count) ->
     case options(Name) of
@@ -101,12 +129,12 @@ cleanup(Name, OptionsRec) ->
     cleanup_ets(Name, OptionsRec),
     cleanup_foil(Name, OptionsRec).
 
-cleanup_ets(Name, #pool_options{pool_strategy = round_robin}) ->
+cleanup_ets(Name, #pool_options {pool_strategy = round_robin}) ->
     ets:delete(?ETS_TABLE_POOL_INDEX, {Name, round_robin});
 cleanup_ets(_Name, _OptionsRec) ->
     ok.
 
-cleanup_foil(Name, #pool_options{pool_size = PoolSize}) ->
+cleanup_foil(Name, #pool_options {pool_size = PoolSize}) ->
     foil:delete(?MODULE, Name),
     [foil:delete(?MODULE, {Name, N}) || N <- lists:seq(1, PoolSize)],
     foil:load(?MODULE).
@@ -128,7 +156,7 @@ options_rec(Client, Options) ->
     PoolSize = ?LOOKUP(pool_size, Options, ?DEFAULT_POOL_SIZE),
     PoolStrategy = ?LOOKUP(pool_strategy, Options, ?DEFAULT_POOL_STRATEGY),
 
-    #pool_options{
+    #pool_options {
         backlog_size = BacklogSize,
         client = Client,
         max_retries = MaxRetries,
@@ -197,17 +225,15 @@ setup(Name, #pool_options {
     setup_ets(Name, OptionsRec),
     setup_foil(Name, OptionsRec).
 
-setup_ets(Name, #pool_options{pool_strategy = round_robin}) ->
+setup_ets(Name, #pool_options {pool_strategy = round_robin}) ->
     ets:insert_new(?ETS_TABLE_POOL_INDEX, {{Name, round_robin}, 1});
 setup_ets(_Name, _OptionsRec) ->
     ok.
 
-setup_foil(Name, #pool_options{pool_size = PoolSize} = OptionsRec) ->
+setup_foil(Name, #pool_options {pool_size = PoolSize} = OptionsRec) ->
     foil:insert(?MODULE, Name, OptionsRec),
-    [
-        foil:insert(?MODULE, {Name, N}, server_name(Name, N))
-        || N <- lists:seq(1, PoolSize)
-    ],
+    [foil:insert(?MODULE, {Name, N}, server_name(Name, N)) ||
+        N <- lists:seq(1, PoolSize)],
     foil:load(?MODULE).
 
 server_name(Name, Index) ->
@@ -219,15 +245,12 @@ server_spec(Name, Index, Client, ClientOptions) ->
     StartFunc = {?SERVER, start_link, [ServerName, ServerOpts]},
     {ServerName, StartFunc, permanent, 5000, worker, [?SERVER]}.
 
-start_children(Name, Client, ClientOptions,
-        #pool_options{pool_size = PoolSize}) ->
-    Servers = [
-        server_spec(Name, Index, Client, ClientOptions)
-        || Index <- lists:seq(1, PoolSize)
-    ],
-    [supervisor:start_child(?SUPERVISOR, Child) || Child <- Servers].
+start_children(Name, Client, ClientOptions, #pool_options {pool_size = PoolSize}) ->
+    [supervisor:start_child(?SUPERVISOR,
+        server_spec(Name, Index, Client, ClientOptions)) ||
+        Index <- lists:seq(1, PoolSize)].
 
-stop_children(_, []) ->
+stop_children(_Name, []) ->
     ok;
 stop_children(Name, [Index | T]) ->
     ServerName = server_name(Name, Index),

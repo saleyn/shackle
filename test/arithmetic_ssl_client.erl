@@ -78,8 +78,7 @@ start(PoolOptions, ClientOptions) ->
         {socket_options, [
             binary,
             {packet, raw},
-            {verify, verify_none},
-            {depth, 3}
+            {verify, verify_none}
         ]}
     ], PoolOptions).
 

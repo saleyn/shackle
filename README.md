@@ -17,6 +17,7 @@ High-Performance Erlang Network Client Framework
 * Performance-optimized
 * Request pipelining
 * Smart reconnect mechanism (exponential backoff)
+* Defining timeout of an established connection
 
 #### Framework goals
 
@@ -162,6 +163,13 @@ shackle_pool:start(pool_name(), client(), client_options(), pool_options())
     <td>[]</td>
     <td>options passed to the socket</td>
   </tr>
+  <tr>
+    <td>bounce_interval_secs</td>
+    <td>pos_integer() | infinity</td>
+    <td>infinity</td>
+    <td>number of seconds between forcing a connection bounce for every
+        connection in a pool</td>
+  </tr>
 </table>
 
 ##### pool_options:
@@ -261,7 +269,7 @@ key(Client, Key) ->
 
 ```makefile
 make dialyzer
-make elvis
+make lint
 make eunit
 make xref
 ```

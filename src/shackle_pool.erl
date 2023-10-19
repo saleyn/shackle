@@ -12,7 +12,14 @@
 -export([
     start/3,
     start/4,
-    stop/1
+    stop/1,
+    init_bounce/1,
+    finalize_bounce/1,
+    wait_until_any_available/2,
+    wait_until_all_available/2,
+    active_all/1,
+    active_any/1,
+    server_name/2
 ]).
 
 %% internal
@@ -83,6 +90,72 @@ stop(Name) ->
             {error, Reason}
     end.
 
+%% @doc Initialize a bounce request for a single connection in the pool.
+%% Only one connection is allowed to bounce at a time. The synchronization
+%% is implemented by using a semaphore.
+-spec init_bounce(shackle_pool:name()) -> boolean().
+init_bounce(Name) ->
+    Sema = persistent_term:get({bounce_sema, Name}),
+    {ok, 1} == sema_nif:acquire(Sema).
+
+%% @doc Finalize a bounce request.
+%% This function must be called after `init_bounce/1' and when a connection
+%% bounce got completed.
+-spec finalize_bounce(shackle_pool:name()) -> ok.
+finalize_bounce(Name) ->
+    Sema = persistent_term:get({bounce_sema, Name}),
+    sema_nif:release(Sema),
+    ok.
+
+%% @doc Wait until the given server pool is available to accept requests
+-spec wait_until_any_available(shackle_pool:name(), non_neg_integer()) -> boolean().
+wait_until_any_available(Name, Timeout) when is_integer(Timeout) ->
+    Now = os:system_time(millisecond),
+    wait_until_available2(any, Name, Now, Now + Timeout).
+
+%% @doc Wait until the given server pool is available to accept requests
+-spec wait_until_all_available(shackle_pool:name(), non_neg_integer()) -> boolean().
+wait_until_all_available(Name, Timeout) when is_integer(Timeout) ->
+    Now = os:system_time(millisecond),
+    wait_until_available2(all, Name, Now, Now + Timeout).
+
+wait_until_available2(_, _Name, Now, Expiration) when Now >= Expiration ->
+    false;
+wait_until_available2(Method, Name, _Now, Expiration) ->
+    case active(Method, Name) of
+        false ->
+            timer:sleep(10),
+            wait_until_available2(Method, Name, os:system_time(millisecond), Expiration);
+        _ ->
+            true
+    end.
+
+active(any, Name) -> active_any(Name);
+active(all, Name) -> active_all(Name).
+
+%% @doc Return true if the pool has at least one available connection
+-spec active_any(shackle_pool:name()) -> boolean().
+active_any(Name) ->
+    case options(Name) of
+        {ok, #pool_options{pool_size = PSize, pool_strategy = PStrat}} ->
+            ServerId = server_id(Name, PSize, PStrat),
+            shackle_status:active(ServerId);
+        {error, _} ->
+            false
+    end.
+
+%% @doc Return true if all connections in the pool are available
+-spec active_all(shackle_pool:name()) -> boolean().
+active_all(Name) ->
+    case options(Name) of
+        {ok, #pool_options{pool_size = PSize}} ->
+            lists:all(fun(I) ->
+                shackle_status:active(_ServerId = {Name, I})
+            end, lists:seq(1, PSize));
+        {error, _} ->
+            false
+    end.
+
 %% internal
 -spec init() ->
     ok.
@@ -96,7 +169,7 @@ init() ->
     foil:load(?MODULE).
 
 -spec server(shackle_pool:name()) ->
-    {ok, shackle:client(), atom(), shackle_sema:release_fun()} |
+    {ok, shackle:client(), atom(), shackle_sema:sema_ref()} |
     {error, pool_not_started | no_server | shackle_not_started}.
 server(Name) ->
     case options(Name) of
@@ -107,7 +180,7 @@ server(Name) ->
     end.
 
 -spec server(shackle_pool:name(), pos_integer()) ->
-    {ok, shackle:client(), atom(), shackle_sema:release_fun()} |
+    {ok, shackle:client(), atom(), shackle_sema:sema_ref()} |
     {error, pool_not_started | no_server | shackle_not_started}.
 server(Name, Count) ->
     case options(Name) of
@@ -186,10 +259,10 @@ server(
             {ok, ServerName} = shackle_pool_foil:lookup(ServerId),
             {ok, Client, ServerName, undefined};
         true ->
-            case shackle_sema:acquire_n(ServerId, Count) of
-                {ok, ReleaseFun} ->
+            case shackle_sema:acquire(Name, ServerIdx, Count) of
+                {ok, Sema} ->
                     {ok, ServerName} = shackle_pool_foil:lookup(ServerId),
-                    {ok, Client, ServerName, ReleaseFun};
+                    {ok, Client, ServerName, Sema};
                 error ->
                     prometheus_counter:inc(shackle_error_total, [
                         Client, Name, integer_to_binary(ServerIdx),
@@ -199,8 +272,7 @@ server(
             end;
         false ->
             prometheus_counter:inc(shackle_error_total, [
-                Client, Name, integer_to_binary(ServerIdx),
-                <<"disabled">>
+                Client, Name, integer_to_binary(ServerIdx), <<"disabled">>
             ]),
             server(Name, Count, Options, N - 1)
     end.
@@ -217,9 +289,12 @@ setup(Name, #pool_options {
         backlog_size = BacklogSize,
         pool_size = PoolSize
     } = OptionsRec) ->
-
     shackle_metrics:init(),
     shackle_sema:new(Name, PoolSize, BacklogSize),
+    %% Create a semaphore for this pool name to be used for checking if a
+    %% connection can be bounced gracefully. The semaphore is used to permit
+    %% only a single connection bounce in a pool at any point in time.
+    persistent_term:put({bounce_sema, Name}, sema_nif:create(1)),
     shackle_queue:new(Name),
     shackle_status:new(Name, PoolSize),
     setup_ets(Name, OptionsRec),
@@ -236,6 +311,7 @@ setup_foil(Name, #pool_options {pool_size = PoolSize} = OptionsRec) ->
         N <- lists:seq(1, PoolSize)],
     foil:load(?MODULE).
 
+-spec server_name(shackle_pool:name(), non_neg_integer()) -> atom().
 server_name(Name, Index) ->
     list_to_atom(atom_to_list(Name) ++ "_" ++ integer_to_list(Index)).
 

@@ -1,6 +1,5 @@
 -module(arithmetic_ssl_server).
 -include("test.hrl").
--include_lib("eunit/include/eunit.hrl").
 
 -export([
     start/0,
@@ -72,8 +71,7 @@ listen() ->
             {active, false},
             {reuseaddr, true},
             {certfile, <<"./test/cert.pem">>},
-            {keyfile, <<"./test/key.pem">>},
-            {verify, verify_none}
+            {keyfile, <<"./test/key.pem">>}
         ],
         {ok, LSocket} = ssl:listen(?PORT, Options),
         Self ! LSocket,
@@ -94,8 +92,12 @@ loop(Socket, Buffer) ->
         {ok, Requests} ->
             Requests2 = <<Buffer/binary, Requests/binary>>,
             {Replies, Buffer2} = arithmetic_protocol:parse_requests(Requests2),
-            ok = ssl:send(Socket, Replies),
-            loop(Socket, Buffer2);
+            case ssl:send(Socket, Replies) of
+                ok ->
+                    loop(Socket, Buffer2);
+                {error, closed} ->
+                    ok
+            end;
         {error, closed} ->
             ok
     end.

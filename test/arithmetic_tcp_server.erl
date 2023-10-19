@@ -84,9 +84,15 @@ loop(Socket, Buffer) ->
 loop_parse_send(Buffer, Socket) ->
     {Reply, Buffer2} = arithmetic_protocol:parse_request(Buffer),
     case Reply of
-        need_more -> Buffer2;
-        skip -> loop_parse_send(Buffer2, Socket);
+        need_more ->
+            Buffer2;
+        skip ->
+            loop_parse_send(Buffer2, Socket);
         _ ->
-            ok = gen_tcp:send(Socket, Reply),
-            loop_parse_send(Buffer2, Socket)
+            case gen_tcp:send(Socket, Reply) of
+                ok ->
+                    loop_parse_send(Buffer2, Socket);
+                {error, closed} ->
+                    ok
+            end
     end.

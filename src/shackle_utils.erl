@@ -1,4 +1,5 @@
 -module(shackle_utils).
+-include("shackle_internal.hrl").
 
 -compile(inline).
 -compile({inline_size, 512}).
@@ -12,6 +13,9 @@
     random_element/1,
     warning_msg/3
 ]).
+
+%% NOTE: use ?WARN(PoolName, Format, Data) macro instead
+-deprecated([warning_msg/3]).
 
 %% public
 -spec ets_options() ->
@@ -63,12 +67,12 @@ random(N) ->
 
 random_element([X]) ->
     X;
-random_element([_|_] = List) ->
-    T = list_to_tuple(List),
-    element(random(tuple_size(T)), T).
+random_element(L) when is_list(L) ->
+    I = length(L),
+    lists:nth(rand:uniform(I), L).
 
 -spec warning_msg(shackle_pool:name(), string(), [term()]) ->
     ok.
 
 warning_msg(Pool, Format, Data) ->
-    error_logger:warning_msg("[~p] " ++ Format, [Pool | Data]).
+    ?WARN(Pool, Format, Data).

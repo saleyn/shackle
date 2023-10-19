@@ -1,5 +1,9 @@
 {"1.2.0",
-[{<<"foil">>,
+[{<<"erlsem">>,
+  {git,"https://github.com/x0id/erlsem.git",
+       {ref,"118506906cb41e9100392da4711bc9303451ec88"}},
+  0},
+ {<<"foil">>,
   {git,"https://github.com/lpgauth/foil.git",
        {ref,"e462829855a745d8f20fb0508ae3eb8e323b03bd"}},
   0},
@@ -12,11 +16,7 @@
        {ref,"43e28220b5affa45aa1e5fb0583fee26547968d3"}},
   0},
  {<<"prometheus">>,{pkg,<<"prometheus">>,<<"4.8.1">>},0},
- {<<"quantile_estimator">>,{pkg,<<"quantile_estimator">>,<<"0.2.1">>},1},
- {<<"sema_nif">>,
-  {git,"https://github.com/x0id/erlsem.git",
-       {ref,"d50cc415faf86de1d01020f50a1932f705af6f92"}},
-  0}]}.
+ {<<"quantile_estimator">>,{pkg,<<"quantile_estimator">>,<<"0.2.1">>},1}]}.
 [
 {pkg_hash,[
  {<<"prometheus">>, <<"FA76B152555273739C14B06F09F485CF6D5D301FE4E9D31B7FF803D26025D7A0">>},

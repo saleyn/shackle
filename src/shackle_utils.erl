@@ -11,7 +11,8 @@
     lookup/3,
     random/1,
     random_element/1,
-    warning_msg/3
+    warning_msg/3,
+    default_options/2
 ]).
 
 %% NOTE: use ?WARN(PoolName, Format, Data) macro instead
@@ -76,3 +77,8 @@ random_element(L) when is_list(L) ->
 
 warning_msg(Pool, Format, Data) ->
     ?WARN(Pool, Format, Data).
+
+-spec default_options(client|pool, [{atom(), any()}]) -> [{atom(), any()}].
+default_options(Node, Options) when Node==pool; Node==client ->
+    DefOptions = ?GET_ENV(Node, []),
+    maps:to_list(maps:merge(maps:from_list(DefOptions), maps:from_list(Options))).

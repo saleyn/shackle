@@ -124,24 +124,26 @@ bounce(PoolName, SrvIdx) ->
 
 init(Name, Parent, Opts) ->
     {PoolName, Index, Client, ServerOpts} = Opts,
+    ServerOpts1 = shackle_utils:default_options(client, ServerOpts),
+
     self() ! ?MSG_CONNECT,
     Id = {PoolName, Index},
     SrvIdxBin = integer_to_binary(Index),
-    InitOptions = ?LOOKUP(init_options, ServerOpts, ?DEFAULT_INIT_OPTS),
-    Address = address(ServerOpts),
-    Port = ?LOOKUP(port, ServerOpts),
-    Protocol = ?LOOKUP(protocol, ServerOpts, ?DEFAULT_PROTOCOL),
-    ReconnectState = reconnect_state(ServerOpts),
-    SocketOptions = ?LOOKUP(socket_options, ServerOpts, ?DEFAULT_SOCKET_OPTS),
+    InitOptions = ?LOOKUP(init_options, ServerOpts1, ?DEFAULT_INIT_OPTS),
+    Address = address(ServerOpts1),
+    Port = ?LOOKUP(port, ServerOpts1),
+    Protocol = ?LOOKUP(protocol, ServerOpts1, ?DEFAULT_PROTOCOL),
+    SocketOptions = ?LOOKUP(socket_options, ServerOpts1, ?DEFAULT_SOCKET_OPTS),
+    ReconnectState = reconnect_state(ServerOpts1),
     BounceInt =
-        case ?LOOKUP(bounce_interval_secs, ServerOpts, infinity) of
+        case ?LOOKUP(bounce_interval_secs, ServerOpts1, infinity) of
             I when is_integer(I) ->
                 I * 1000;
             infinity = I ->
                 I
         end,
     OnBounceEvent =
-        case ?LOOKUP(on_bounce_event, ServerOpts, undefined) of
+        case ?LOOKUP(on_bounce_event, ServerOpts1, undefined) of
             undefined ->
                 undefined;
             Fun when is_function(Fun, 3) ->

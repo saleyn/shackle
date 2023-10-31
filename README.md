@@ -108,6 +108,19 @@ terminate(_State) -> ok.
 
 #### Starting client pool
 
+By default a shackle client implementation will read the configuration
+options from the `shackle` application config:
+
+```erlang
+{shackle, [
+    {pool,   PoolOptions::pool_options()},
+    {client, ClientOptions::client_options()}
+]}.
+```
+
+The options passed as `client_options()`, `pool_options()` to
+`shackle_pool:start/4` will override the defaults:
+
 ```erlang
 shackle_pool:start(pool_name(), client(), client_options(), pool_options())
 ```

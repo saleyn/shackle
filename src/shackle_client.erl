@@ -34,6 +34,7 @@
                   {reconnect, boolean()} |
                   {reconnect_time_max, shackle:time() | infinity} |
                   {reconnect_time_min, shackle:time()} |
+                  {bounce_interval_secs, non_neg_integer() | infinity} |
                   {socket_options, shackle:socket_options()}.
 -type options() :: [option()].
 

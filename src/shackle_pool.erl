@@ -224,10 +224,11 @@ options(Name) ->
     end.
 
 options_rec(Client, Options) ->
-    BacklogSize = ?LOOKUP(backlog_size, Options, ?DEFAULT_BACKLOG_SIZE),
-    MaxRetries = ?LOOKUP(max_retries, Options, ?DEFAULT_MAX_RETRIES),
-    PoolSize = ?LOOKUP(pool_size, Options, ?DEFAULT_POOL_SIZE),
-    PoolStrategy = ?LOOKUP(pool_strategy, Options, ?DEFAULT_POOL_STRATEGY),
+    Options1 = shackle_utils:default_options(pool, Options),
+    BacklogSize = ?LOOKUP(backlog_size, Options1, ?DEFAULT_BACKLOG_SIZE),
+    MaxRetries = ?LOOKUP(max_retries, Options1, ?DEFAULT_MAX_RETRIES),
+    PoolSize = ?LOOKUP(pool_size, Options1, ?DEFAULT_POOL_SIZE),
+    PoolStrategy = ?LOOKUP(pool_strategy, Options1, ?DEFAULT_POOL_STRATEGY),
 
     #pool_options {
         backlog_size = BacklogSize,

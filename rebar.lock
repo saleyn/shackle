@@ -9,7 +9,7 @@
   0},
  {<<"granderl">>,
   {git,"https://github.com/adgear/granderl.git",
-       {ref,"04cafe466b11010687ecc29f99aacb4234401f8c"}},
+       {ref,"a628b5f8ae696b1c4a8583b679661d2bf0d4affb"}},
   0},
  {<<"metal">>,
   {git,"https://github.com/lpgauth/metal.git",

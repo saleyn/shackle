@@ -40,7 +40,7 @@
     terminate/2
 ]).
 
--ifdef(TEST).
+-ifndef(NO_BOUNCE_EVENT).
 -define(ON_BOUNCE_EVENT(State, Event), on_bounce_event(State, Event)).
 -else.
 -define(ON_BOUNCE_EVENT(_State, _Event), ok).
@@ -722,10 +722,9 @@ log_metrics2(Metric, Args, N) ->
 now_time_ms() ->
     os:system_time(millisecond).
 
--ifdef(TEST).
+-ifndef(NO_BOUNCE_EVENT).
 on_bounce_event(#state{id = {Nm, Idx}, on_bounce_event = Fun}, Event) when is_function(Fun, 3) ->
     Fun(Nm, Idx, Event);
 on_bounce_event(_, _) ->
     ok.
-
 -endif.

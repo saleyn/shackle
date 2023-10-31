@@ -183,6 +183,14 @@ shackle_pool:start(pool_name(), client(), client_options(), pool_options())
     <td>number of seconds between forcing a connection bounce for every
         connection in a pool</td>
   </tr>
+  <tr>
+    <td>on_bounce_event</td>
+    <td>{Module::atom(), Function::atom()}</td>
+    <td></td>
+    <td>Module:Function/3 to call on connection bounce events. The
+        function will receive three arguments: `PoolName::atom()`, `ServerInstance::integer()`, and `Event::map()`. This is
+        useful for troubleshooting and logging.</td>
+  </tr>
 </table>
 
 ##### pool_options:

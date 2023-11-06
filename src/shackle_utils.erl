@@ -12,7 +12,8 @@
     random/1,
     random_element/1,
     warning_msg/3,
-    default_options/2
+    default_options/2,
+    merge_options/1
 ]).
 
 %% NOTE: use ?WARN(PoolName, Format, Data) macro instead
@@ -84,6 +85,63 @@ warning_msg(Pool, Format, Data) ->
 default_options(Node, Options) when Node==pool; Node==client ->
     DefOptions = ?GET_ENV(Node, []),
     maps:to_list(maps:merge(to_map(DefOptions), to_map(Options))).
+
+%% @doc Shackle clients can use this function to merge their provided
+%% options for a shackle client and pool with the global shackle options
+%% defined in the `shackle' application.  The global options are overriden
+%% by the client options passed to this function. If a client provides an
+%% option `{Option, Value}' in the `Options' list with the value equal to
+%% the default value for that option in shackle, and shackle defines a global
+%% value different from this default, then the global value will be used.
+%%
+%% Example:
+%% ```
+%% Config: {shackle, [{pool, [{pool_size, 2}]}]}
+%%
+%% Here the returned pool_size will be 2, because 16 is the default for
+%% shackle pool size:
+%%
+%%   shackle_utils:merge_options([{pool_size, 16}])
+%%
+%% And here pool_size will be 4, because it's defined in the client's config:
+%%
+%% Config:
+%% [
+%%   {shackle, [{pool, [{pool_size, 2}]}]},
+%%   {barker, [{pool_size, 4}]}
+%% ].
+%%
+%% shackle_utils:merge_options([{}])
+-spec merge_options(atom() | [{atom(), any()}]) -> [{atom(), any()}].
+merge_options(AppShackleOptions) when is_list(AppShackleOptions) ->
+    F = fun({I, D}) ->
+        case proplists:get_value(I, AppShackleOptions, undefined) of
+            undefined -> {I, ?GET_ENV(I, D)};
+            Value when Value =:= D -> {I, ?GET_ENV(I, D)};
+            Value -> {I, Value}
+        end
+    end,
+    PoolConfig = lists:map(F, [
+        {backlog_size, ?DEFAULT_BACKLOG_SIZE},
+        {max_retries, ?DEFAULT_MAX_RETRIES},
+        {pool_size, ?DEFAULT_POOL_SIZE},
+        {pool_strategy, ?DEFAULT_POOL_STRATEGY}
+    ]),
+    ClientConfig = lists:foldl(F, [], [
+        {ip, ?DEFAULT_ADDRESS},
+        {address, ?DEFAULT_ADDRESS},
+        {protocol, ?DEFAULT_PROTOCOL},
+        {reconnect, ?DEFAULT_RECONNECT},
+        {reconnect_time_max, ?DEFAULT_RECONNECT_MAX},
+        {reconnect_time_min, ?DEFAULT_RECONNECT_MIN},
+        {socket_options, ?DEFAULT_SOCKET_OPTS},
+        {bounce_interval_secs, infinity},
+        {on_bounce_event, undefined}
+    ]),
+    {ClientConfig, PoolConfig};
+
+merge_options(App) ->
+    merge_options(application:get_all_env(App)).
 
 to_map(L) when is_list(L) -> maps:from_list(L);
 to_map(M) when is_map(M)  -> M.

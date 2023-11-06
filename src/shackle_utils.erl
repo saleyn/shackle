@@ -12,7 +12,8 @@
     random/1,
     random_element/1,
     warning_msg/3,
-    default_options/2
+    default_options/2,
+    merge_options/2
 ]).
 
 %% NOTE: use ?WARN(PoolName, Format, Data) macro instead
@@ -82,3 +83,28 @@ warning_msg(Pool, Format, Data) ->
 default_options(Node, Options) when Node==pool; Node==client ->
     DefOptions = ?GET_ENV(Node, []),
     maps:to_list(maps:merge(maps:from_list(DefOptions), maps:from_list(Options))).
+
+%% @doc Shackle clients can use this function to merge their provided
+%% options for a shackle client and pool with the global shackle options
+%% defined in the `shackle' application.  The global options are overriden
+%% by the client options passed to this function.
+-spec merge_options([{atom(), any()}]|map(), [{atom(), any()}]|map()) ->
+    {ClientConfig::list(), PoolConfig::list()}.
+merge_options(ClientOptions, PoolOptions) ->
+    ShackleConfig = application:get_all_env(shackle),
+    ClientConfig = proplists:from_map(
+        maps:merge(
+            proplists:to_map(proplists:get_value(client, ShackleConfig, [])),
+            to_map(ClientOptions)
+        )
+    ),
+    PoolConfig = proplists:from_map(
+        maps:merge(
+            proplists:to_map(proplists:get_value(pool, ShackleConfig, [])),
+            to_map(PoolOptions)
+        )
+    ),
+    {ClientConfig, PoolConfig}.
+
+to_map(L) when is_list(L) -> maps:from_list(L);
+to_map(M) when is_map(M)  -> M.

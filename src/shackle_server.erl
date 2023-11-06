@@ -435,13 +435,13 @@ close(#state {id = Id} = State, ClientState, Reason)
 
 connect(Protocol, Address, Port, SocketOptions, PoolName) ->
     case inet:getaddrs(Address, inet) of
-        {ok, Ips} ->
+        {ok, Ips} when Ips /= [] ->
             Ip = shackle_utils:random_element(Ips),
             case Protocol:connect(Ip, Port, SocketOptions) of
                 {ok, Socket} ->
                     {ok, Socket};
                 {error, Reason} ->
-                    ?WARN(PoolName, "connect error: ~p", [Reason]),
+                    ?WARN(PoolName, "~s:~w connect error: ~p", [Address, Port, Reason]),
                     {error, Reason}
             end;
         {error, Reason} ->

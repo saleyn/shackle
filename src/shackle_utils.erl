@@ -117,7 +117,7 @@ default_options(Node, Options) when Node==pool; Node==client ->
 %% ].
 %%
 %% shackle_utils:merge_options([{}])
--spec merge_options(atom() | [{atom(), any()}]) ->
+-spec merge_options([{atom(), any()}]) ->
     {[{atom(), any()}], [{atom(), any()}]}.
 merge_options(AppShackleOptions) when is_list(AppShackleOptions) ->
     F = fun({I, {Type, D}}) ->
@@ -146,6 +146,8 @@ merge_options(AppShackleOptions) when is_list(AppShackleOptions) ->
     ]),
     {ClientConfig, PoolConfig}.
 
+-spec merge_options(atom(), [{atom(), any()}]) ->
+    {[{atom(), any()}], [{atom(), any()}]}.
 merge_options(App, DefaultOpts) when is_atom(App), is_list(DefaultOpts) ->
     Env = application:get_all_env(App),
     % Merge shackle globals with what's provided in the application environment

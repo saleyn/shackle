@@ -4,6 +4,10 @@
 -compile(inline).
 -compile({inline_size, 512}).
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 %% public
 -export([
     ets_options/0,
@@ -112,36 +116,67 @@ default_options(Node, Options) when Node==pool; Node==client ->
 %% ].
 %%
 %% shackle_utils:merge_options([{}])
--spec merge_options(atom() | [{atom(), any()}]) -> [{atom(), any()}].
+-spec merge_options(atom() | [{atom(), any()}]) ->
+    {[{atom(), any()}], [{atom(), any()}]}.
 merge_options(AppShackleOptions) when is_list(AppShackleOptions) ->
-    F = fun({I, D}) ->
+    F = fun({I, {Type, D}}) ->
         case proplists:get_value(I, AppShackleOptions, undefined) of
-            undefined -> {I, ?GET_ENV(I, D)};
-            Value when Value =:= D -> {I, ?GET_ENV(I, D)};
+            undefined -> {I, proplists:get_value(I, ?GET_ENV(Type, []), D)};
+            Value when Value =:= D -> {I, proplists:get_value(I, ?GET_ENV(Type, []), D)};
             Value -> {I, Value}
         end
     end,
     PoolConfig = lists:map(F, [
-        {backlog_size, ?DEFAULT_BACKLOG_SIZE},
-        {max_retries, ?DEFAULT_MAX_RETRIES},
-        {pool_size, ?DEFAULT_POOL_SIZE},
-        {pool_strategy, ?DEFAULT_POOL_STRATEGY}
+        {backlog_size, {pool, ?DEFAULT_BACKLOG_SIZE}},
+        {max_retries, {pool, ?DEFAULT_MAX_RETRIES}},
+        {pool_size, {pool, ?DEFAULT_POOL_SIZE}},
+        {pool_strategy, {pool, ?DEFAULT_POOL_STRATEGY}}
     ]),
-    ClientConfig = lists:foldl(F, [], [
-        {ip, ?DEFAULT_ADDRESS},
-        {address, ?DEFAULT_ADDRESS},
-        {protocol, ?DEFAULT_PROTOCOL},
-        {reconnect, ?DEFAULT_RECONNECT},
-        {reconnect_time_max, ?DEFAULT_RECONNECT_MAX},
-        {reconnect_time_min, ?DEFAULT_RECONNECT_MIN},
-        {socket_options, ?DEFAULT_SOCKET_OPTS},
-        {bounce_interval_secs, infinity},
-        {on_bounce_event, undefined}
+    ClientConfig = lists:map(F, [
+        {ip, {client, ?DEFAULT_ADDRESS}},
+        {address, {client, ?DEFAULT_ADDRESS}},
+        {protocol, {client, ?DEFAULT_PROTOCOL}},
+        {reconnect, {client, ?DEFAULT_RECONNECT}},
+        {reconnect_time_max, {client, ?DEFAULT_RECONNECT_MAX}},
+        {reconnect_time_min, {client, ?DEFAULT_RECONNECT_MIN}},
+        {socket_options, {client, ?DEFAULT_SOCKET_OPTS}},
+        {bounce_interval_secs, {client, ?DEFAULT_BOUNCE_INTERVAL}},
+        {on_bounce_event, {client, undefined}}
     ]),
     {ClientConfig, PoolConfig};
 
-merge_options(App) ->
+merge_options(App) when is_atom(App) ->
     merge_options(application:get_all_env(App)).
 
 to_map(L) when is_list(L) -> maps:from_list(L);
 to_map(M) when is_map(M)  -> M.
+
+%%%----------------------------------------------------------------------------
+%%% Testing
+%%%----------------------------------------------------------------------------
+-ifdef(EUNIT).
+
+shackle_settings_test_() ->
+    {setup,
+        fun() ->
+            Old = application:get_all_env(shackle),
+            application:set_env(shackle, client, [{bounce_interval_secs, 100}]),
+            Old
+        end,
+        fun(Old) ->
+            [application:set_env(shackle, K, V) || {K, V} <- Old]
+        end,
+        [
+            ?_assertEqual(300, check(shackle_utils:merge_options([{bounce_interval_secs, 300}]))),
+            % Provided option is the same as shackle default value for this option,
+            % but there's a global shackle value provided (100):
+            ?_assertEqual(100, check(shackle_utils:merge_options([{bounce_interval_secs, infinity}]))),
+            ?_assertEqual(ok, application:unset_env(shackle, client)),
+            ?_assertEqual(infinity, check(shackle_utils:merge_options([{bounce_interval_secs, infinity}])))
+        ]
+    }.
+
+check({L, _}) ->
+    proplists:get_value(bounce_interval_secs, L, undefined).
+
+-endif.

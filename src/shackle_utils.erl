@@ -135,6 +135,7 @@ merge_options(AppShackleOptions) when is_list(AppShackleOptions) ->
     ]),
     ClientConfig = lists:map(F, [
         {ip, {client, ?DEFAULT_ADDRESS}},
+        {port, {client, 0}},
         {protocol, {client, ?DEFAULT_PROTOCOL}},
         {reconnect, {client, ?DEFAULT_RECONNECT}},
         {reconnect_time_max, {client, ?DEFAULT_RECONNECT_MAX}},
@@ -143,6 +144,8 @@ merge_options(AppShackleOptions) when is_list(AppShackleOptions) ->
         {bounce_interval_secs, {client, ?DEFAULT_BOUNCE_INTERVAL}},
         {on_bounce_event, {client, undefined}}
     ]),
+    proplists:get_value(port, ClientConfig) =:= 0
+        andalso erlang:error({missing_port_option, ClientConfig}),
     {ClientConfig, PoolConfig}.
 
 -spec merge_options(atom(), [{atom(), any()}]) ->

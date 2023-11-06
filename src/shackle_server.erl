@@ -155,6 +155,10 @@ init(Name, Parent, Opts) ->
                     orelse error({function_not_exported, {M, F, 3}}),
                 fun(Event) -> M:F(PoolName, Index, Event) end
         end,
+
+    lists:member(Port, [undefined, 0]) andalso
+        erlang:error({missing_port_option, Name, ServerOpts1}),
+
     {ok, {#state {
         address = Address,
         client = Client,

@@ -144,8 +144,6 @@ merge_options(AppShackleOptions) when is_list(AppShackleOptions) ->
         {bounce_interval_secs, {client, ?DEFAULT_BOUNCE_INTERVAL}},
         {on_bounce_event, {client, undefined}}
     ]),
-    proplists:get_value(port, ClientConfig) =:= 0
-        andalso erlang:error({missing_port_option, ClientConfig}),
     {ClientConfig, PoolConfig}.
 
 -spec merge_options(atom(), [{atom(), any()}]) ->
@@ -179,6 +177,7 @@ shackle_settings_test_() ->
         end,
         fun(Old) ->
             application:unset_env(abcdef, bounce_interval_secs),
+            application:unset_env(abcdef, port),
             [application:set_env(shackle, K, V) || {K, V} <- Old]
         end,
         [
@@ -189,11 +188,17 @@ shackle_settings_test_() ->
             ?_assertEqual(ok, application:unset_env(shackle, client)),
             ?_assertEqual(infinity, check(shackle_utils:merge_options([{bounce_interval_secs, infinity}]))),
             ?_assertEqual(10, check(shackle_utils:merge_options(abcdef, []))),
-            ?_assertEqual(10, check(shackle_utils:merge_options(abcdef, [{bounce_interval_secs, infinity}])))
+            ?_assertEqual(10, check(shackle_utils:merge_options(abcdef, [{bounce_interval_secs, infinity}]))),
+            ?_assertEqual(0,  check(port, shackle_utils:merge_options(abcdef, []))),
+            ?_assertEqual(ok, application:set_env(abcdef, port, 20)),
+            ?_assertEqual(20, check(port, shackle_utils:merge_options(abcdef, [])))
         ]
     }.
 
 check({L, _}) ->
     proplists:get_value(bounce_interval_secs, L, undefined).
+
+check(I, {L, _}) ->
+    proplists:get_value(I, L, undefined).
 
 -endif.

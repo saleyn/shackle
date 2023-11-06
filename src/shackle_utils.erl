@@ -135,7 +135,6 @@ merge_options(AppShackleOptions) when is_list(AppShackleOptions) ->
     ]),
     ClientConfig = lists:map(F, [
         {ip, {client, ?DEFAULT_ADDRESS}},
-        {address, {client, ?DEFAULT_ADDRESS}},
         {protocol, {client, ?DEFAULT_PROTOCOL}},
         {reconnect, {client, ?DEFAULT_RECONNECT}},
         {reconnect_time_max, {client, ?DEFAULT_RECONNECT_MAX}},

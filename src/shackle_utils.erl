@@ -17,7 +17,8 @@
     random_element/1,
     warning_msg/3,
     default_options/2,
-    merge_options/1
+    merge_options/1,
+    merge_options/2
 ]).
 
 %% NOTE: use ?WARN(PoolName, Format, Data) macro instead
@@ -143,10 +144,18 @@ merge_options(AppShackleOptions) when is_list(AppShackleOptions) ->
         {bounce_interval_secs, {client, ?DEFAULT_BOUNCE_INTERVAL}},
         {on_bounce_event, {client, undefined}}
     ]),
-    {ClientConfig, PoolConfig};
+    {ClientConfig, PoolConfig}.
 
-merge_options(App) when is_atom(App) ->
-    merge_options(application:get_all_env(App)).
+merge_options(App, DefaultOpts) when is_atom(App), is_list(DefaultOpts) ->
+    Env = application:get_all_env(App),
+    % Merge shackle globals with what's provided in the application environment
+    Opts = lists:foldl(fun({K, _} = KV, Acc) ->
+        case proplists:lookup(K, Acc) of
+            none -> [KV | Acc];       % Value provided in the default options
+            _ -> Acc                  % Value provided by client's environment
+        end
+    end, Env, DefaultOpts),
+    merge_options(Opts).
 
 to_map(L) when is_list(L) -> maps:from_list(L);
 to_map(M) when is_map(M)  -> M.
@@ -161,9 +170,11 @@ shackle_settings_test_() ->
         fun() ->
             Old = application:get_all_env(shackle),
             application:set_env(shackle, client, [{bounce_interval_secs, 100}]),
+            application:set_env(abcdef, bounce_interval_secs, 10),
             Old
         end,
         fun(Old) ->
+            application:unset_env(abcdef, bounce_interval_secs),
             [application:set_env(shackle, K, V) || {K, V} <- Old]
         end,
         [
@@ -172,7 +183,9 @@ shackle_settings_test_() ->
             % but there's a global shackle value provided (100):
             ?_assertEqual(100, check(shackle_utils:merge_options([{bounce_interval_secs, infinity}]))),
             ?_assertEqual(ok, application:unset_env(shackle, client)),
-            ?_assertEqual(infinity, check(shackle_utils:merge_options([{bounce_interval_secs, infinity}])))
+            ?_assertEqual(infinity, check(shackle_utils:merge_options([{bounce_interval_secs, infinity}]))),
+            ?_assertEqual(10, check(shackle_utils:merge_options(abcdef, []))),
+            ?_assertEqual(10, check(shackle_utils:merge_options(abcdef, [{bounce_interval_secs, infinity}])))
         ]
     }.
 

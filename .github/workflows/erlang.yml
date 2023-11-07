@@ -5,7 +5,7 @@ jobs:
     runs-on: [self-hosted, ubuntu-22.04-large]
     strategy:
       matrix:
-        erlang: [24, 25, 26]
+        erlang: [26]
 
     container:
       image: erlang:${{ matrix.erlang }}

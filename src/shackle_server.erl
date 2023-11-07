@@ -20,6 +20,9 @@
 %%  <dd>Interval in seconds when a connection must be forcefully bounced.
 %%      Defaults to `infinity', which disables the bouncing feature. A
 %%      bounce is done on one connection at a time.</dd>
+%% <dt>on_bounce_event</dt>
+%%  <dd>A callback function called on various events related to connection
+%%      bouncing.</dd>
 %% </du>
 -module(shackle_server).
 -include("shackle_internal.hrl").
@@ -41,7 +44,10 @@
 ]).
 
 -ifndef(NO_BOUNCE_EVENT).
--define(ON_BOUNCE_EVENT(State, Event), on_bounce_event(State, Event)).
+-define(ON_BOUNCE_EVENT(State, Event),
+    (is_function(State#state.on_bounce_event, 3) andalso
+        (State#state.on_bounce_event)(
+            element(1, State#state.id), element(2, State#state.id), Event))).
 -else.
 -define(ON_BOUNCE_EVENT(_State, _Event), ok).
 -endif.
@@ -136,7 +142,7 @@ init(Name, Parent, Opts) ->
     SocketOptions = ?LOOKUP(socket_options, ServerOpts1, ?DEFAULT_SOCKET_OPTS),
     ReconnectState = reconnect_state(ServerOpts1),
     BounceInt =
-        case ?LOOKUP(bounce_interval_secs, ServerOpts1, infinity) of
+        case ?LOOKUP(bounce_interval_secs, ServerOpts1, ?DEFAULT_BOUNCE_INTERVAL) of
             I when is_integer(I) ->
                 I * 1000;
             infinity = I ->
@@ -301,6 +307,7 @@ handle_msg(?MSG_CONNECT, {#state {
                         status => connected,
                         next_bounce => State1#state.next_bounce,
                         bounce_state => State1#state.bounce_state,
+                        bounce_interval => State1#state.bounce_interval,
                         src => {?MODULE, ?LINE}
                     }),
                     {ok, {State1, ClientState2}};
@@ -432,6 +439,7 @@ close(#state {id = Id} = State, ClientState, Reason)
     ?ON_BOUNCE_EVENT(State, #{
         status => socket_close,
         bounce_state => Reason,
+        bounce_interval => State#state.bounce_interval,
         src => {?MODULE, ?LINE}
     }),
     reply_all({error, socket_closed}, State, ClientState),
@@ -588,12 +596,9 @@ wrap(Casts) when is_list(Casts) ->
 wrap(Cast) ->
     [Cast].
 
-reply(Reply, Casts, #state{bounce_state = draining} = State, ClientState) ->
-    reply2(Reply, Casts, State),
-    maybe_bounce(State, ClientState);
 reply(Reply, Casts, State, ClientState) ->
     reply2(Reply, Casts, State),
-    {ok, {State, ClientState}}.
+    maybe_bounce(State, ClientState).
 
 %% For batch replies Pid is the same in all casts in the list.
 %% TODO: Optimize the batch replies to deliver them as 1 message to Pid?
@@ -642,7 +647,7 @@ schedule_bounce(#state{bounce_interval = MSec} = State) ->
     erlang:send_after(MSec, self(), bounce_connection),
     State#state{next_bounce = Time}.
 
-maybe_bounce(State, ClientState) ->
+maybe_bounce(#state{bounce_state = draining} = State, ClientState) ->
     %% If we are in the process of waiting for a connection bounce and draining
     %% the queue, when the queue has been drained, proceed with the bounce.
     case shackle_queue:length(State#state.queue) of
@@ -653,7 +658,8 @@ maybe_bounce(State, ClientState) ->
             ?ON_BOUNCE_EVENT(State, #{
                 status => finalizing_bounce,
                 bounce_state => reconnecting,
-                src => {?MODULE, ?LINE}
+                bounce_interval => State#state.bounce_interval,
+            src => {?MODULE, ?LINE}
             }),
             close(State, ClientState, reconnecting);
         _N ->
@@ -661,10 +667,13 @@ maybe_bounce(State, ClientState) ->
                 status => awaiting_empty_queue,
                 queue_len => _N,
                 bounce_state => draining,
-                src => {?MODULE, ?LINE}
+                bounce_interval => State#state.bounce_interval,
+            src => {?MODULE, ?LINE}
             }),
             {ok, {State, ClientState}}
-    end.
+    end;
+maybe_bounce(State, ClientState) ->
+    {ok, {State, ClientState}}.
 
 %% If bounce timeout is set and the current time exceeds the timeout,
 %% enter the connection draining state
@@ -681,6 +690,7 @@ bounce_check(#state{bounce_state = waiting, next_bounce = Time} = State, ClientS
                         status => bounce_initiated,
                         bounce_state => draining,
                         server_status => disabled,
+                        bounce_interval => State#state.bounce_interval,
                         src => {?MODULE, ?LINE}
                     }),
                     ?LOG_DEBUG("[~p] connection ~p bounce initiated", [State#state.pool_name, State#state.id]),
@@ -695,6 +705,7 @@ bounce_check(#state{bounce_state = waiting, next_bounce = Time} = State, ClientS
                         reason => another_connection_bouncing,
                         next_bounce_check => NewInterval,
                         bounce_state => State#state.bounce_state,
+                        bounce_interval => State#state.bounce_interval,
                         src => {?MODULE, ?LINE}
                     }),
                     erlang:send_after(NewInterval, self(), bounce_connection),
@@ -705,6 +716,7 @@ bounce_check(#state{bounce_state = waiting, next_bounce = Time} = State, ClientS
                 status => schedule_bounce_check,
                 next_bounce_check => Interval,
                 bounce_state => State#state.bounce_state,
+                bounce_interval => State#state.bounce_interval,
                 src => {?MODULE, ?LINE}
             }),
             erlang:send_after(Interval, self(), bounce_connection),
@@ -725,10 +737,3 @@ log_metrics2(Metric, Args, N) ->
 
 now_time_ms() ->
     os:system_time(millisecond).
-
--ifndef(NO_BOUNCE_EVENT).
-on_bounce_event(#state{id = {Nm, Idx}, on_bounce_event = Fun}, Event) when is_function(Fun, 3) ->
-    Fun(Nm, Idx, Event);
-on_bounce_event(_, _) ->
-    ok.
--endif.

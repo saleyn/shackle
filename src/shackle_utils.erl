@@ -18,7 +18,8 @@
     warning_msg/3,
     default_options/2,
     merge_options/1,
-    merge_options/2
+    merge_options/2,
+    merge_options/3
 ]).
 
 %% NOTE: use ?WARN(PoolName, Format, Data) macro instead
@@ -91,6 +92,11 @@ default_options(Node, Options) when Node==pool; Node==client ->
     DefOptions = ?GET_ENV(Node, []),
     maps:to_list(maps:merge(to_map(DefOptions), to_map(Options))).
 
+-spec merge_options([{atom(), any()}] | map()) ->
+    {[{atom(), any()}], [{atom(), any()}]}.
+merge_options(AppShackleOptions) ->
+    merge_options(application:get_application(), to_map(AppShackleOptions), #{}).
+
 %% @doc Shackle clients can use this function to merge their provided
 %% options for a shackle client and pool with the global shackle options
 %% defined in the `shackle' application.  The global options are overriden
@@ -99,32 +105,123 @@ default_options(Node, Options) when Node==pool; Node==client ->
 %% the default value for that option in shackle, and shackle defines a global
 %% value different from this default, then the global value will be used.
 %%
-%% Example:
+%% The function will throw exception if the any of the `shackle' option names
+%% are invalid or any option value has a wrong type.
+%%
+%% ===Example===
+%% Given the call `shackle_utils:merge_options(barker, [{pool_size, 3}])':
+%%
+%% 1. In this config `pool_size = 2' will be used because 16 is the default for
+%% the pool size:
 %% ```
-%% Config: {shackle, [{pool, [{pool_size, 2}]}]}
+%% [{shackle, [{pool, [{pool_size, 2}]}]}].
+%% '''
 %%
-%% Here the returned pool_size will be 2, because 16 is the default for
-%% shackle pool size:
-%%
-%%   shackle_utils:merge_options([{pool_size, 16}])
-%%
-%% And here pool_size will be 4, because it's defined in the client's config:
-%%
-%% Config:
+%% 2. In this config `pool_size = 4' will be used, because it's defined in the
+%% `barker' application's top-level config:
+%% ```
 %% [
 %%   {shackle, [{pool, [{pool_size, 2}]}]},
 %%   {barker, [{pool_size, 4}]}
 %% ].
-%%
-%% shackle_utils:merge_options(barker, [{pool_size, 3}])   % Returns 4
 %% '''
--spec merge_options([{atom(), any()}]) ->
+%%
+%% 3. In this config `pool_size = 6' will be used, because it's defined in the
+%% `barker' application's top-level config, which overrides the
+%% `{barker, [{shackle, ...}]}' config:
+%% ```
+%% [
+%%   {shackle, [{pool, [{pool_size, 2}]}]},
+%%   {barker, [{shackle, [{pool, [{pool_size, 4}]}}]}]},
+%%   {barker, [{pool_size, 6}]}
+%% ].
+%% '''
+%%
+%% 4. In this config `pool_size = 4' will be used, because it's defined in the
+%% `barker' application's `shackle' config, which overrides the global `shackle'
+%% config:
+%% ```
+%% [
+%%   {shackle, [{pool, [{pool_size, 2}]}]},
+%%   {barker, [{shackle, [{pool, [{pool_size, 4}]}}]}]}
+%% ].
+%%
+%% 5. In this config `pool_size = 2' will be used, because it's defined in the
+%% the global `shackle' config:
+%% ```
+%% [
+%%   {shackle, [{pool, [{pool_size, 2}]}]}
+%% ].
+%% '''
+%%
+%% 6. In this case the `pool_size = 3' value is derived from the default
+%% options passed to the `merge_options/2':
+%% ```
+%% [].
+%% '''
+-spec merge_options(atom(), [{atom(), any()}] | map()) ->
     {[{atom(), any()}], [{atom(), any()}]}.
-merge_options(AppShackleOptions) when is_list(AppShackleOptions) ->
+merge_options(App, DefaultOpts) when is_atom(App) ->
+    merge_options(App, to_map(DefaultOpts), #{}).
+
+%% @doc Same as `merge_options/2', but also allows to map option key names.
+%%
+%% The `KeyMap' argument allows the client to define key mapping between
+%% the shackle configuration options and the configuration key names in client
+%% environment.
+%%
+%% Example:
+%% ```
+%% Config:
+%% [
+%%   {shackle, [{pool, [{pool_size, 2}]}]},
+%%   {barker, [{barker_pool_size, 4}]}
+%% ].
+%%
+%% shackle_utils:merge_options(barker, [{pool_size, 3}],
+%%     #{pool_size => barker_pool_size})     % Returns 4
+%% '''
+-spec merge_options(atom()|[{atom(), any()}], [{atom(), any()}] | map(), #{atom() => atom()}) ->
+    {[{atom(), any()}], [{atom(), any()}]}.
+merge_options(App, DefaultOpts, KeyMap) when is_atom(App) ->
+    AppEnv = application:get_all_env(App),
+    merge_options(AppEnv, DefaultOpts, KeyMap);
+
+merge_options(AppEnv, Defaults, KeyMap) when
+    (is_list(AppEnv) orelse is_map(AppEnv)),
+    (is_list(Defaults) orelse is_map(Defaults)),
+    is_map(KeyMap)
+->
+    validate_options(Defaults),
+
+    % (1) Application's top-level options override application options
+    % under the `shackle' environment entry.
+    % (2) Application's options under `shackle' override shackle global options
+    % defined in the `shackle' application
+    % (3) Default options
+    Env = to_map(AppEnv),
+    AppEnvOpts0 = maps:get(shackle, Env, []),
+    AppEnvOpts = #{
+        pool =>
+            maps:merge(
+                to_map(application:get_env(shackle, pool, [])),
+                to_map(proplists:get_value(pool, AppEnvOpts0, []))),
+        client =>
+            maps:merge(
+                to_map(application:get_env(shackle, client, [])),
+                to_map(proplists:get_value(client, AppEnvOpts0, [])))
+    },
+
+    DefaultOpts = to_map(Defaults),
+
     F = fun({I, {Type, D}}, A) ->
-        case proplists:get_value(I, AppShackleOptions, undefined) of
+        % Translate the key if a key map is provided
+        K = maps:get(I, KeyMap, I),
+        case maps:get(K, Env, undefined) of
             V when V == undefined; V =:= D ->
-                case proplists:get_value(I, ?GET_ENV(Type, []), D) of
+                Opts = maps:get(Type, AppEnvOpts),
+                Def = maps:get(I, DefaultOpts, D),
+                case maps:get(I, Opts, Def) of
                     DV when DV == undefined; DV =:= D ->
                         A;
                     DV ->
@@ -151,86 +248,102 @@ merge_options(AppShackleOptions) when is_list(AppShackleOptions) ->
         {bounce_interval_secs, {client, ?DEFAULT_BOUNCE_INTERVAL}},
         {on_bounce_event, {client, undefined}}
     ]),
+    validate_options(PoolConfig),
+    validate_options(ClientConfig),
     {ClientConfig, PoolConfig}.
 
--spec merge_options(atom(), [{atom(), any()}]) ->
-    {[{atom(), any()}], [{atom(), any()}]}.
-merge_options(App, DefaultOpts) when is_atom(App), is_list(DefaultOpts) ->
-    merge_options(App, DefaultOpts, #{}).
-
-%% @doc Shackle clients can use this function to merge their provided
-%% options for a shackle client and pool with the global shackle options
-%% defined in the `shackle' application.
-%%
-%% The `KeyMap' argument allows the client to define key mapping between
-%% the configuration keys in client environment and shackle configuration
-%% options.
-%%
-%% Example:
-%% ```
-%% Config:
-%% [
-%%   {shackle, [{pool, [{pool_size, 2}]}]},
-%%   {barker, [{barker_pool_size, 4}]}
-%% ].
-%%
-%% shackle_utils:merge_options(barker, [{pool_size, 3}],
-%%     #{barker_pool_size => pool_size})     % Returns 4
-%% '''
--spec merge_options(atom()|[{atom(), any()}], [{atom(), any()}], #{atom() => atom()}) ->
-    {[{atom(), any()}], [{atom(), any()}]}.
-merge_options(App, DefaultOpts, KeyMap) when is_atom(App), is_list(DefaultOpts), is_map(KeyMap) ->
-    AppEnv = application:get_all_env(App),
-    merge_options(AppEnv, DefaultOpts, KeyMap);
-
-merge_options(AppEnv, DefaultOpts, KeyMap) when is_list(AppEnv), is_list(DefaultOpts), is_map(KeyMap) ->
-    validate_options(DefaultOpts),
-    % Translate the keys if a key map is provided.
-    Env = lists:map(fun({K, V}) ->
-        case maps:find(K, KeyMap) of
-            {ok, NewK} -> {NewK, V};
-            error -> {K, V}
-        end
-    end, AppEnv),
-    % Merge shackle globals with what's provided in the application environment
-    Opts = lists:foldl(fun({K, _} = KV, Acc) ->
-        case proplists:lookup(K, Acc) of
-            none -> [KV | Acc];       % Value provided in the default options
-            _ -> Acc                  % Value provided by client's environment
-        end
-    end, Env, DefaultOpts),
-    merge_options(Opts).
-
+to_map(undefined)         -> #{};
 to_map(L) when is_list(L) -> maps:from_list(L);
 to_map(M) when is_map(M)  -> M.
 
-validate_options([]) -> ok;
-validate_options([{backlog_size, V} | T]) when is_integer(V) -> validate_options(T);
-validate_options([{max_retries, V} | T]) when is_integer(V) -> validate_options(T);
-validate_options([{pool_size, V} | T]) when is_integer(V) -> validate_options(T);
-validate_options([{pool_strategy, random} | T]) -> validate_options(T);
-validate_options([{pool_strategy, round_robin} | T]) -> validate_options(T);
-validate_options([{ip, V} | T]) when is_list(V); is_tuple(V) -> validate_options(T);
-validate_options([{address, V} | T]) when is_list(V); is_tuple(V) -> validate_options(T);
-validate_options([{port, V} | T]) when is_integer(V) -> validate_options(T);
-validate_options([{protocol, shackle_tcp} | T]) -> validate_options(T);
-validate_options([{protocol, shackle_udp} | T]) -> validate_options(T);
-validate_options([{protocol, shackle_ssl} | T]) -> validate_options(T);
-validate_options([{reconnect, V} | T]) when is_boolean(V) -> validate_options(T);
-validate_options([{reconnect_time_max, V} | T]) when is_integer(V), V >= 0 -> validate_options(T);
-validate_options([{reconnect_time_min, V} | T]) when is_integer(V), V >= 0 -> validate_options(T);
-validate_options([{socket_options, V} | T]) when is_list(V) -> validate_options(T);
-validate_options([{bounce_interval_secs, V} | T]) when is_integer(V) -> validate_options(T);
-validate_options([{bounce_interval_secs, infinity} | T]) -> validate_options(T);
-validate_options([{on_bounce_event, {M,F}} | T]) when is_atom(M), is_atom(F) -> validate_options(T);
-validate_options([{on_bounce_event, V} | T]) when is_function(V, 3) -> validate_options(T);
-validate_options([{on_bounce_event, undefined} | T]) -> validate_options(T);
-validate_options([KV | _]) -> erlang:error({invalid_shackle_option, KV}).
+
+validate_options(L) when is_list(L) -> validate(L);
+validate_options(L) when is_map(L)  -> validate(maps:to_list(L)).
+
+validate([]) -> ok;
+validate([{backlog_size, V} | T]) when is_integer(V) -> validate(T);
+validate([{max_retries, V} | T]) when is_integer(V) -> validate(T);
+validate([{pool_size, V} | T]) when is_integer(V) -> validate(T);
+validate([{pool_strategy, random} | T]) -> validate(T);
+validate([{pool_strategy, round_robin} | T]) -> validate(T);
+validate([{ip, V} | T]) when is_list(V); is_tuple(V) -> validate(T);
+validate([{address, V} | T]) when is_list(V); is_tuple(V) -> validate(T);
+validate([{port, V} | T]) when is_integer(V) -> validate(T);
+validate([{protocol, shackle_tcp} | T]) -> validate(T);
+validate([{protocol, shackle_udp} | T]) -> validate(T);
+validate([{protocol, shackle_ssl} | T]) -> validate(T);
+validate([{reconnect, V} | T]) when is_boolean(V) -> validate(T);
+validate([{reconnect_time_max, V} | T]) when is_integer(V), V >= 0 -> validate(T);
+validate([{reconnect_time_min, V} | T]) when is_integer(V), V >= 0 -> validate(T);
+validate([{socket_options, V} | T]) when is_list(V) -> validate(T);
+validate([{bounce_interval_secs, V} | T]) when is_integer(V) -> validate(T);
+validate([{bounce_interval_secs, infinity} | T]) -> validate(T);
+validate([{on_bounce_event, {M,F}} | T]) when is_atom(M), is_atom(F) -> validate(T);
+validate([{on_bounce_event, V} | T]) when is_function(V, 3) -> validate(T);
+validate([{on_bounce_event, undefined} | T]) -> validate(T);
+validate([KV | _]) -> erlang:error({invalid_shackle_option, KV}).
 
 %%%----------------------------------------------------------------------------
 %%% Testing
 %%%----------------------------------------------------------------------------
 -ifdef(EUNIT).
+
+shackle_settings_hierarchy_test_() ->
+    {setup,
+        fun() ->
+            application:set_env(shackle, pool, [{pool_size, 100}]),
+            application:set_env(abcdef, pool_size, 80),
+            application:set_env(abcdef, temp_pool_size, 70),
+            application:set_env(abcdef, shackle, [{pool, [{pool_size, 90}]}])
+        end,
+        fun(_) ->
+            application:unset_env(abcdef, shackle),
+            application:unset_env(abcdef, pool_size),
+            application:unset_env(abcdef, temp_pool_size),
+            application:unset_env(shackle, pool)
+        end,
+        [
+            % If there is an option name translation, use `temp_pool_size'
+            ?_assertEqual(
+                {[],[{pool_size, 70}]},
+                shackle_utils:merge_options(
+                    abcdef, [{pool_size, 10}], #{pool_size => temp_pool_size})),
+            ?_assertEqual(ok, application:unset_env(abcdef, temp_pool_size)),
+
+            % If there is an option name translation and no `temp_pool_size' is
+            % defined, ignore the top-level `pool_size'.
+            ?_assertEqual(
+                {[],[{pool_size, 90}]},
+                shackle_utils:merge_options(abcdef, [{pool_size, 10}], #{pool_size => temp_pool_size})),
+            % If there is no option name translation, use top-level `pool_size'
+            ?_assertEqual(
+                {[],[{pool_size, 80}]},
+                shackle_utils:merge_options(abcdef, [{pool_size, 10}])),
+            ?_assertEqual(ok, application:unset_env(abcdef, pool_size)),
+
+            ?_assertEqual(
+                {[],[{pool_size, 90}]},
+                shackle_utils:merge_options(
+                    abcdef, [{pool_size, 10}], #{pool_size => temp_pool_size})),
+            ?_assertEqual(ok, application:unset_env(abcdef, shackle)),
+
+            ?_assertEqual(
+                {[],[{pool_size, 100}]},
+                shackle_utils:merge_options(
+                    abcdef, [{pool_size, 10}], #{pool_size => temp_pool_size})),
+            ?_assertEqual(ok, application:unset_env(shackle, pool)),
+
+            ?_assertEqual(
+                {[],[{pool_size, 10}]},
+                shackle_utils:merge_options(
+                    abcdef, [{pool_size, 10}], #{pool_size => temp_pool_size})),
+            ?_assertEqual(
+                {[],[{pool_size, 10}]},
+                shackle_utils:merge_options(abcdef, [{pool_size, 10}])),
+
+            ?_assertEqual({[],[]}, shackle_utils:merge_options(abcdef, []))
+        ]
+    }.
 
 shackle_settings_test_() ->
     {setup,
@@ -244,14 +357,13 @@ shackle_settings_test_() ->
             application:unset_env(shackle, client)
         end,
         [
-            ?_assertEqual(300, check(shackle_utils:merge_options([{bounce_interval_secs, 300}]))),
+            ?_assertEqual(10, check(shackle_utils:merge_options(abcdef, [{bounce_interval_secs, 300}]))),
             % Provided option is the same as shackle default value for this option,
             % but there's a global shackle value provided (100):
-            ?_assertEqual(100, check(shackle_utils:merge_options([{bounce_interval_secs, infinity}]))),
-            ?_assertEqual(ok, application:unset_env(shackle, client)),
-            ?_assertEqual({[], []}, shackle_utils:merge_options([{bounce_interval_secs, infinity}])),
-            ?_assertEqual(10, check(shackle_utils:merge_options(abcdef, []))),
             ?_assertEqual(10, check(shackle_utils:merge_options(abcdef, [{bounce_interval_secs, infinity}]))),
+            ?_assertEqual(ok, application:unset_env(shackle, client)),
+            ?_assertEqual(10, check(shackle_utils:merge_options(abcdef, [{bounce_interval_secs, infinity}]))),
+            ?_assertEqual(10, check(shackle_utils:merge_options(abcdef, []))),
             ?_assertEqual({[{bounce_interval_secs,10}], []},  shackle_utils:merge_options(abcdef, [])),
             ?_assertEqual(ok, application:set_env(abcdef, port, 20)),
             ?_assertEqual(20, check(port, shackle_utils:merge_options(abcdef, [])))
@@ -260,7 +372,7 @@ shackle_settings_test_() ->
 
 shackle_mapped_settings_test_() ->
     AppEnv = [{temp_interval_secs, 30}, {temp_port, 1234}],
-    KeyMap = #{temp_port => port, temp_interval_secs => bounce_interval_secs},
+    KeyMap = #{port => temp_port, bounce_interval_secs => temp_interval_secs},
     {setup,
         fun() ->
             application:set_env(shackle, client, [{port, 10}, {bounce_interval_secs, 100}])
@@ -275,8 +387,21 @@ shackle_mapped_settings_test_() ->
                           merge_options(AppEnv, [{bounce_interval_secs, infinity}], KeyMap)),
             ?_assertEqual({[{bounce_interval_secs,30},{port,1234}],[{max_retries,5}]},
                           merge_options(AppEnv, [{max_retries, 5}], KeyMap)),
-            ?_assertEqual({[{bounce_interval_secs,30},{port,1234}],[]}, merge_options(AppEnv, [], KeyMap)),
-            ?_assertError({invalid_shackle_option, _}, merge_options(AppEnv, [{max_restarts, 5}], KeyMap))
+            ?_assertEqual({[{bounce_interval_secs,30},{port,1234}],[]}, merge_options(AppEnv, [], KeyMap))
+        ]
+    }.
+
+shackle_validation_test_() ->
+    {setup,
+        fun() ->
+            application:set_env(shackle, client, [{port, a}])
+        end,
+        fun(_) ->
+            application:unset_env(shackle, client)
+        end,
+        [
+            ?_assertError({invalid_shackle_option, {port, a}}, merge_options([], [], #{})),
+            ?_assertError({invalid_shackle_option, {max_restarts, 5}}, merge_options([], [{max_restarts, 5}], #{}))
         ]
     }.
 

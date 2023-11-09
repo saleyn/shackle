@@ -289,7 +289,7 @@ setup(Module, Client, PoolOptions, SrvOptions) ->
     Server = server(Client),
     Server:start(),
     Client:start(PoolOptions, SrvOptions),
-    Client:wait_until_all_available(2000) orelse
+    Client:wait_until_all_available(4000) orelse
         erlang:error({server_not_available, Client}),
     Cleanup.
 

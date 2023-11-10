@@ -19,7 +19,8 @@
     wait_until_all_available/2,
     active_all/1,
     active_any/1,
-    server_name/2
+    server_name/2,
+    options/1
 ]).
 
 %% internal
@@ -137,9 +138,10 @@ active(all, Name) -> active_all(Name).
 -spec active_any(shackle_pool:name()) -> boolean().
 active_any(Name) ->
     case options(Name) of
-        {ok, #pool_options{pool_size = PSize, pool_strategy = PStrat}} ->
-            ServerId = server_id(Name, PSize, PStrat),
-            shackle_status:active(ServerId);
+        {ok, #pool_options{pool_size = PSize}} ->
+            lists:any(fun(I) ->
+                shackle_status:active(_ServerId = {Name, I})
+            end, lists:seq(1, PSize));
         {error, _} ->
             false
     end.
@@ -212,6 +214,7 @@ cleanup_foil(Name, #pool_options {pool_size = PoolSize}) ->
     [foil:delete(?MODULE, {Name, N}) || N <- lists:seq(1, PoolSize)],
     foil:load(?MODULE).
 
+-spec options(atom()) -> {ok, list()} | {error, atom()}.
 options(Name) ->
     try shackle_pool_foil:lookup(Name) of
         {ok, Options} ->

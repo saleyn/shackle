@@ -32,8 +32,12 @@
 
 -export([
     start_link/2,
+    state/1,
     state/2,
-    bounce/2
+    bounce/1,
+    bounce/2,
+    set_bounce_event/2,
+    set_bounce_event/3
 ]).
 
 -behaviour(metal).
@@ -104,7 +108,11 @@ start_link(Name, Opts) ->
 -spec state(shackle_pool:name(), pos_integer()) ->
     {ok, #{connection_state => map(), handler_state => any()}} | {error, noproc}.
 state(PoolName, SrvIdx) ->
-    SrvName = shackle_pool:server_name(PoolName, SrvIdx),
+    state(shackle_pool:server_name(PoolName, SrvIdx)).
+
+-spec state(atom()) ->
+    {ok, #{connection_state => map(), handler_state => any()}} | {error, noproc}.
+state(SrvName) ->
     try sys:get_state(SrvName) of
         {?MODULE, _SrvName, _Pid, {State, CliState}} ->
             {ok, #{
@@ -121,8 +129,31 @@ state(PoolName, SrvIdx) ->
 
 -spec bounce(shackle_pool:name(), pos_integer()) -> boolean().
 bounce(PoolName, SrvIdx) ->
-    SrvName = shackle_pool:server_name(PoolName, SrvIdx),
+    bounce(shackle_pool:server_name(PoolName, SrvIdx)).
+
+-spec bounce(atom()) -> boolean().
+bounce(SrvName) ->
     bounce_connection == catch (SrvName ! bounce_connection).
+
+%% @doc Set the bounce event callback.
+%% Use `Fun = undefiend` to clear the bounce event.  The bounce event
+%% is only available if the project is compiled without the `NO_BOUNCE_EVENT'
+%% option.
+-spec set_bounce_event(shackle_pool:name(), pos_integer(),
+                        fun((atom(), integer(), map()) -> ok) | undefined) ->
+    ok | not_found.
+set_bounce_event(PoolName, SrvIdx, Fun) ->
+    set_bounce_event(shackle_pool:server_name(PoolName, SrvIdx), Fun).
+
+-spec set_bounce_event(atom(), fun((atom(), integer(), map()) -> ok) | undefined) ->
+    ok | not_found.
+set_bounce_event(SrvName, Fun) when is_function(Fun, 3); Fun == undefined ->
+    try
+        SrvName ! {set_bounce_event, Fun},
+        ok
+    catch _ ->
+        not_found
+    end.
 
 %% metal callbacks
 -spec init(name(), pid(), opts()) ->
@@ -358,6 +389,8 @@ handle_msg({timeout, ExtRequestId}, {#state {
     end;
 handle_msg(bounce_connection, {State, ClientState}) ->
     bounce_check(State, ClientState);
+handle_msg({set_bounce_event, Fun}, {State, ClientState}) when is_function(Fun, 3); Fun==undefined ->
+    {ok, {State#state{on_bounce_event = Fun}, ClientState}};
 handle_msg(Msg, {#state{pool_name = PoolName} = State, ClientState}) ->
     ?WARN(PoolName, "unknown msg: ~p", [Msg]),
     {ok, {State, ClientState}}.
@@ -453,17 +486,17 @@ connect(Protocol, Address, Port, SocketOptions, PoolName) ->
                 {ok, Socket} ->
                     {ok, Socket};
                 {error, Reason} ->
-                    ?WARN(PoolName, "~s:~w connect error: ~p", [Address, Port, Reason]),
+                    ?WARN(PoolName, "~s:~w ~w connect error (~w): ~p", [Address, Port, Protocol, Ip, Reason]),
                     {error, Reason}
             end;
         {error, Reason} ->
-            ?WARN(PoolName, "getaddrs error: ~p", [Reason]),
+            ?WARN(PoolName, "getaddrs ~p error: ~p", [Address, Reason]),
             {error, Reason}
     end.
 
 handle_msg_close(S, #state {socket = S, pool_name = PoolName} = State, ClientState) ->
     log_metrics(State, shackle_close_total),
-    ?WARN(PoolName, "SrvIdx=~s: connection closed", [State#state.srv_idx]),
+    ?WARN(PoolName, "#~s: connection closed", [State#state.srv_idx]),
     close(State, ClientState);
 handle_msg_close(_Socket, State, ClientState) ->
     log_metrics(State, shackle_close_total),
@@ -654,7 +687,7 @@ maybe_bounce(#state{bounce_state = draining} = State, ClientState) ->
         0 ->
             Pool = State#state.pool_name,
             shackle_pool:finalize_bounce(Pool),
-            ?LOG_DEBUG("[~p] connection ~p bounce finalized - reconnecting", [Pool, State#state.id]),
+            ?LOG_DEBUG("[~p] connection bounce finalized - reconnecting", [State#state.name]),
             ?ON_BOUNCE_EVENT(State, #{
                 status => finalizing_bounce,
                 bounce_state => reconnecting,
@@ -693,7 +726,7 @@ bounce_check(#state{bounce_state = waiting, next_bounce = Time} = State, ClientS
                         bounce_interval => State#state.bounce_interval,
                         src => {?MODULE, ?LINE}
                     }),
-                    ?LOG_DEBUG("[~p] connection ~p bounce initiated", [State#state.pool_name, State#state.id]),
+                    ?LOG_DEBUG("[~p] connection bounce initiated", [State#state.name, State#state.id]),
                     shackle_status:disable(State#state.id),
                     maybe_bounce(State#state{bounce_state = draining}, ClientState);
                 false ->

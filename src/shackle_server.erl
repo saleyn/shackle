@@ -186,8 +186,13 @@ init(Name, Parent, Opts) ->
             Fun when is_function(Fun, 3) ->
                 Fun;
             {M, F} when is_atom(M), is_atom(F) ->
-                {module, M} == code:load_file(M)
-                    orelse error({cannot_load_module, M}),
+                case code:is_loaded(M) of
+                    false ->
+                        {module, M} == code:load_file(M)
+                            orelse error({cannot_load_module, M});
+                    _ ->
+                        ok
+                end,
                 erlang:function_exported(M, F, 3)
                     orelse error({function_not_exported, {M, F, 3}}),
                 fun(Event) -> M:F(PoolName, Index, Event) end

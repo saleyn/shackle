@@ -19,6 +19,7 @@
     wait_until_all_available/2,
     active_all/1,
     active_any/1,
+    status/1,
     server_name/2,
     options/1
 ]).
@@ -59,12 +60,12 @@
 
 %% public
 -spec start(shackle_pool:name(), shackle:client(), shackle_client:options()) ->
-    ok | {error, shackle_not_started | pool_already_started}.
+    ok | {error, atom()}.
 start(Name, Client, ClientOptions) ->
     start(Name, Client, ClientOptions, []).
 
 -spec start(shackle_pool:name(), shackle:client(), shackle_client:options(), options()) ->
-    ok | {error, shackle_not_started | pool_already_started}.
+    ok | {error, atom()}.
 start(Name, Client, ClientOptions, Options) ->
     case options(Name) of
         {ok, _OptionsRec} ->
@@ -78,7 +79,7 @@ start(Name, Client, ClientOptions, Options) ->
             ok
     end.
 
--spec stop(shackle_pool:name()) -> ok | {error, shackle_not_started | pool_not_started}.
+-spec stop(shackle_pool:name()) -> ok | {error, atom}.
 stop(Name) ->
     case options(Name) of
         {ok, #pool_options{
@@ -156,6 +157,21 @@ active_all(Name) ->
             end, lists:seq(1, PSize));
         {error, _} ->
             false
+    end.
+
+%% @doc Return a list of connection handling server names and their active status
+-spec status(shackle_pool:name()) -> [{atom(), boolean()}].
+status(Name) ->
+    case options(Name) of
+        {ok, #pool_options{pool_size = PSize}} ->
+            F = fun
+                (true)  -> active;
+                (false) -> inactive
+            end,
+            [{server_name(Name, I), F(shackle_status:active({Name, I}))}
+                || I <- lists:seq(1, PSize)];
+        {error, _} ->
+            []
     end.
 
 %% internal

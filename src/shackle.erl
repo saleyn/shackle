@@ -22,6 +22,7 @@
     cast/4,
     receive_batch_expect_ordered_replies/1,
     receive_batch_response/1,
+    receive_batch_response/2,
     receive_response/1,
     receive_response/2
 ]).
@@ -368,6 +369,11 @@ receive_batch_expect_ordered_replies(BatchState) ->
 receive_batch_response(BatchState) ->
     receive_batch_response(BatchState, [], infinity).
 
+-spec receive_batch_response(batch_state(), non_neg_integer()|infinity) ->
+    [{request_ref(), reply()} | {error, term()}].
+receive_batch_response(BatchState, Timeout) when is_integer(Timeout); Timeout==infinity ->
+    receive_batch_response(BatchState, [], Timeout).
+
 %% @doc Receive response for the list of requests.
 %% Parameters:
 %% <dl>
@@ -411,7 +417,7 @@ receive_batch_response({_BatchRef, _Count, _RequestRefs} = Args, Acc, Timeout) -
     {Now, Expiration} =
         case Timeout of
             infinity -> {undefined, Timeout};
-            _ when is_integer(Timeout) ->
+            _ ->
                 N = now_time_msec(),
                 {N, N + Timeout}
         end,
@@ -421,10 +427,11 @@ receive_batch_response({_BatchRef, 0, _RequestRefs}, Acc, _Now, _Expiration) ->
     lists:reverse(Acc);
 receive_batch_response({BatchRef, Count, RequestRefs}, Acc, Now, Expiration) ->
     Timeout =
-        if is_integer(Expiration) ->
-            max(0, Expiration - Now);
-        true ->
-            Expiration
+        case Expiration of
+            infinity ->
+                Expiration;
+            _ ->
+                max(0, Expiration - Now)
         end,
     receive
         {#cast {batch_ref = BatchRef, request_id = {_, RequestRef}}, Reply} ->

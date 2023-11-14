@@ -46,6 +46,7 @@
 -type name() :: atom().
 -type pool_size() :: pos_integer().
 -type pool_strategy() :: random | round_robin.
+-type pool_options() :: #pool_options{}.
 -type option() :: {backlog_size, shackle_backlog:backlog_size()} |
                   {max_retries, max_retries()} |
                   {pool_size, pool_size()} |
@@ -60,12 +61,12 @@
 
 %% public
 -spec start(shackle_pool:name(), shackle:client(), shackle_client:options()) ->
-    ok | {error, atom()}.
+    ok | {error, shackle_not_started | pool_not_started | pool_already_started}.
 start(Name, Client, ClientOptions) ->
     start(Name, Client, ClientOptions, []).
 
 -spec start(shackle_pool:name(), shackle:client(), shackle_client:options(), options()) ->
-    ok | {error, atom()}.
+    ok | {error, shackle_not_started | pool_not_started | pool_already_started}.
 start(Name, Client, ClientOptions, Options) ->
     case options(Name) of
         {ok, _OptionsRec} ->
@@ -79,7 +80,8 @@ start(Name, Client, ClientOptions, Options) ->
             ok
     end.
 
--spec stop(shackle_pool:name()) -> ok | {error, atom}.
+-spec stop(shackle_pool:name()) ->
+    ok | {error, shackle_not_started | pool_not_started}.
 stop(Name) ->
     case options(Name) of
         {ok, #pool_options{
@@ -160,7 +162,7 @@ active_all(Name) ->
     end.
 
 %% @doc Return a list of connection handling server names and their active status
--spec status(shackle_pool:name()) -> [{atom(), boolean()}].
+-spec status(shackle_pool:name()) -> [{atom(), active | inactive}].
 status(Name) ->
     case options(Name) of
         {ok, #pool_options{pool_size = PSize}} ->
@@ -188,7 +190,7 @@ init() ->
 
 -spec server(shackle_pool:name()) ->
     {ok, shackle:client(), atom(), shackle_sema:sema_ref()} |
-    {error, pool_not_started | no_server | shackle_not_started}.
+    {error, atom()}.
 server(Name) ->
     case options(Name) of
         {ok, #pool_options{max_retries = MaxRetries} = Options} ->
@@ -199,7 +201,7 @@ server(Name) ->
 
 -spec server(shackle_pool:name(), pos_integer()) ->
     {ok, shackle:client(), atom(), shackle_sema:sema_ref()} |
-    {error, pool_not_started | no_server | shackle_not_started}.
+    {error, atom()}.
 server(Name, Count) ->
     case options(Name) of
         {ok, #pool_options{max_retries = MaxRetries} = Options} ->
@@ -230,7 +232,8 @@ cleanup_foil(Name, #pool_options {pool_size = PoolSize}) ->
     [foil:delete(?MODULE, {Name, N}) || N <- lists:seq(1, PoolSize)],
     foil:load(?MODULE).
 
--spec options(atom()) -> {ok, list()} | {error, atom()}.
+-spec options(atom()) ->
+    {ok, pool_options()} | {error, pool_not_started | shackle_not_started}.
 options(Name) ->
     try shackle_pool_foil:lookup(Name) of
         {ok, Options} ->
@@ -284,14 +287,14 @@ server(
                     {ok, ServerName} = shackle_pool_foil:lookup(ServerId),
                     {ok, Client, ServerName, Sema};
                 error ->
-                    prometheus_counter:inc(shackle_error_total, [
+                    prometheus_counter:inc(shackle_attempt_total, [
                         Client, Name, integer_to_binary(ServerIdx),
                         <<"backlog full">>
                     ]),
                     server(Name, Count, Options, N - 1)
             end;
         false ->
-            prometheus_counter:inc(shackle_error_total, [
+            prometheus_counter:inc(shackle_attempt_total, [
                 Client, Name, integer_to_binary(ServerIdx), <<"disabled">>
             ]),
             server(Name, Count, Options, N - 1)

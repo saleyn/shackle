@@ -19,7 +19,9 @@
     wait_until_all_available/2,
     active_all/1,
     active_any/1,
-    server_name/2
+    status/1,
+    server_name/2,
+    options/1
 ]).
 
 %% internal
@@ -44,6 +46,7 @@
 -type name() :: atom().
 -type pool_size() :: pos_integer().
 -type pool_strategy() :: random | round_robin.
+-type pool_options() :: #pool_options{}.
 -type option() :: {backlog_size, shackle_backlog:backlog_size()} |
                   {max_retries, max_retries()} |
                   {pool_size, pool_size()} |
@@ -58,12 +61,12 @@
 
 %% public
 -spec start(shackle_pool:name(), shackle:client(), shackle_client:options()) ->
-    ok | {error, shackle_not_started | pool_already_started}.
+    ok | {error, shackle_not_started | pool_not_started | pool_already_started}.
 start(Name, Client, ClientOptions) ->
     start(Name, Client, ClientOptions, []).
 
 -spec start(shackle_pool:name(), shackle:client(), shackle_client:options(), options()) ->
-    ok | {error, shackle_not_started | pool_already_started}.
+    ok | {error, shackle_not_started | pool_not_started | pool_already_started}.
 start(Name, Client, ClientOptions, Options) ->
     case options(Name) of
         {ok, _OptionsRec} ->
@@ -77,7 +80,8 @@ start(Name, Client, ClientOptions, Options) ->
             ok
     end.
 
--spec stop(shackle_pool:name()) -> ok | {error, shackle_not_started | pool_not_started}.
+-spec stop(shackle_pool:name()) ->
+    ok | {error, shackle_not_started | pool_not_started}.
 stop(Name) ->
     case options(Name) of
         {ok, #pool_options{
@@ -137,9 +141,10 @@ active(all, Name) -> active_all(Name).
 -spec active_any(shackle_pool:name()) -> boolean().
 active_any(Name) ->
     case options(Name) of
-        {ok, #pool_options{pool_size = PSize, pool_strategy = PStrat}} ->
-            ServerId = server_id(Name, PSize, PStrat),
-            shackle_status:active(ServerId);
+        {ok, #pool_options{pool_size = PSize}} ->
+            lists:any(fun(I) ->
+                shackle_status:active(_ServerId = {Name, I})
+            end, lists:seq(1, PSize));
         {error, _} ->
             false
     end.
@@ -156,6 +161,21 @@ active_all(Name) ->
             false
     end.
 
+%% @doc Return a list of connection handling server names and their active status
+-spec status(shackle_pool:name()) -> [{atom(), active | inactive}].
+status(Name) ->
+    case options(Name) of
+        {ok, #pool_options{pool_size = PSize}} ->
+            F = fun
+                (true)  -> active;
+                (false) -> inactive
+            end,
+            [{server_name(Name, I), F(shackle_status:active({Name, I}))}
+                || I <- lists:seq(1, PSize)];
+        {error, _} ->
+            []
+    end.
+
 %% internal
 -spec init() ->
     ok.
@@ -170,7 +190,7 @@ init() ->
 
 -spec server(shackle_pool:name()) ->
     {ok, shackle:client(), atom(), shackle_sema:sema_ref()} |
-    {error, pool_not_started | no_server | shackle_not_started}.
+    {error, atom()}.
 server(Name) ->
     case options(Name) of
         {ok, #pool_options{max_retries = MaxRetries} = Options} ->
@@ -181,7 +201,7 @@ server(Name) ->
 
 -spec server(shackle_pool:name(), pos_integer()) ->
     {ok, shackle:client(), atom(), shackle_sema:sema_ref()} |
-    {error, pool_not_started | no_server | shackle_not_started}.
+    {error, atom()}.
 server(Name, Count) ->
     case options(Name) of
         {ok, #pool_options{max_retries = MaxRetries} = Options} ->
@@ -212,6 +232,8 @@ cleanup_foil(Name, #pool_options {pool_size = PoolSize}) ->
     [foil:delete(?MODULE, {Name, N}) || N <- lists:seq(1, PoolSize)],
     foil:load(?MODULE).
 
+-spec options(atom()) ->
+    {ok, pool_options()} | {error, pool_not_started | shackle_not_started}.
 options(Name) ->
     try shackle_pool_foil:lookup(Name) of
         {ok, Options} ->
@@ -265,14 +287,14 @@ server(
                     {ok, ServerName} = shackle_pool_foil:lookup(ServerId),
                     {ok, Client, ServerName, Sema};
                 error ->
-                    prometheus_counter:inc(shackle_error_total, [
+                    prometheus_counter:inc(shackle_attempt_total, [
                         Client, Name, integer_to_binary(ServerIdx),
                         <<"backlog full">>
                     ]),
                     server(Name, Count, Options, N - 1)
             end;
         false ->
-            prometheus_counter:inc(shackle_error_total, [
+            prometheus_counter:inc(shackle_attempt_total, [
                 Client, Name, integer_to_binary(ServerIdx), <<"disabled">>
             ]),
             server(Name, Count, Options, N - 1)

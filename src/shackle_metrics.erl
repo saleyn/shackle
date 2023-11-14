@@ -26,6 +26,11 @@
         {labels, [client, pool, server, reason]}
     ],
     [
+        {name, shackle_attempt_total},
+        {help, "Count of shackle server lookup attempts"},
+        {labels, [client, pool, server, reason]}
+    ],
+    [
         {name, shackle_reply_total},
         {help, "Count of shackle replies"},
         {labels, [client, pool, server]}

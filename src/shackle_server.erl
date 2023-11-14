@@ -32,8 +32,14 @@
 
 -export([
     start_link/2,
+    state/1,
     state/2,
-    bounce/2
+    bounce/1,
+    bounce/2,
+    next_bounce/1,
+    next_bounce/2,
+    set_bounce_event/2,
+    set_bounce_event/3
 ]).
 
 -behaviour(metal).
@@ -70,8 +76,10 @@
     bounce_interval  :: infinity  | pos_integer(),  %% # of ms for conn bounce
     bounce_state     :: waiting   |                 %% Waiting for next bounce
                         draining  |                 %% Draining request queue
+                        awaiting_empty_queue |      %% Awaiting for the request queue to empty
                         reconnecting |              %% Reconnecting to server
                         disconnected,               %% Disconnected from server
+    drain_timer_ref  :: undefined | reference(),    %% Timer reference of queue drain check
     on_bounce_event  :: undefined | function(),
     next_bounce      :: undefined | pos_integer(),  %% Epoch timestamp when to close connection
     timer_ref        :: undefined | reference()
@@ -104,7 +112,11 @@ start_link(Name, Opts) ->
 -spec state(shackle_pool:name(), pos_integer()) ->
     {ok, #{connection_state => map(), handler_state => any()}} | {error, noproc}.
 state(PoolName, SrvIdx) ->
-    SrvName = shackle_pool:server_name(PoolName, SrvIdx),
+    state(shackle_pool:server_name(PoolName, SrvIdx)).
+
+-spec state(atom()) ->
+    {ok, #{connection_state => map(), handler_state => any()}} | {error, noproc}.
+state(SrvName) ->
     try sys:get_state(SrvName) of
         {?MODULE, _SrvName, _Pid, {State, CliState}} ->
             {ok, #{
@@ -121,8 +133,53 @@ state(PoolName, SrvIdx) ->
 
 -spec bounce(shackle_pool:name(), pos_integer()) -> boolean().
 bounce(PoolName, SrvIdx) ->
-    SrvName = shackle_pool:server_name(PoolName, SrvIdx),
+    bounce(shackle_pool:server_name(PoolName, SrvIdx)).
+
+-spec bounce(atom()) -> boolean().
+bounce(SrvName) ->
     bounce_connection == catch (SrvName ! bounce_connection).
+
+-spec next_bounce(shackle_pool:name(), pos_integer()) ->
+    {ok, integer() | infinity} | {error, any}.
+next_bounce(PoolName, SrvIdx) ->
+    next_bounce(shackle_pool:server_name(PoolName, SrvIdx)).
+
+%% Get the number of milliseconds left until the next connection bounce
+-spec next_bounce(atom()) ->
+    {ok, integer() | infinity} | {error, any}.
+next_bounce(SrvName) ->
+    try
+        Ref = make_ref(),
+        SrvName ! {next_bounce, self(), Ref},
+        receive
+            {Ref, Interval} ->
+                {ok, Interval}
+        after 5000 ->
+            {error, timeout}
+        end
+    catch _:R ->
+        {error, R}
+    end.
+
+%% @doc Set the bounce event callback.
+%% Use `Fun = undefiend` to clear the bounce event.  The bounce event
+%% is only available if the project is compiled without the `NO_BOUNCE_EVENT'
+%% option.
+-spec set_bounce_event(shackle_pool:name(), pos_integer(),
+                        fun((atom(), integer(), map()) -> ok) | undefined) ->
+    ok | not_found.
+set_bounce_event(PoolName, SrvIdx, Fun) ->
+    set_bounce_event(shackle_pool:server_name(PoolName, SrvIdx), Fun).
+
+-spec set_bounce_event(atom(), fun((atom(), integer(), map()) -> ok) | undefined) ->
+    ok | not_found.
+set_bounce_event(SrvName, Fun) when is_function(Fun, 3); Fun == undefined ->
+    try
+        SrvName ! {set_bounce_event, Fun},
+        ok
+    catch _ ->
+        not_found
+    end.
 
 %% metal callbacks
 -spec init(name(), pid(), opts()) ->
@@ -155,8 +212,13 @@ init(Name, Parent, Opts) ->
             Fun when is_function(Fun, 3) ->
                 Fun;
             {M, F} when is_atom(M), is_atom(F) ->
-                {module, M} == code:load_file(M)
-                    orelse error({cannot_load_module, M}),
+                case code:is_loaded(M) of
+                    false ->
+                        {module, M} == code:load_file(M)
+                            orelse error({cannot_load_module, M});
+                    _ ->
+                        ok
+                end,
                 erlang:function_exported(M, F, 3)
                     orelse error({function_not_exported, {M, F, 3}}),
                 fun(Event) -> M:F(PoolName, Index, Event) end
@@ -353,11 +415,21 @@ handle_msg({timeout, ExtRequestId}, {#state {
                 {ok, Cast, _TimerRef} ->
                     reply({error, timeout}, [Cast], State, ClientState);
                 {error, not_found} ->
-                    {ok, {State, ClientState}}
+                    maybe_bounce(State, ClientState, false)
             end
     end;
 handle_msg(bounce_connection, {State, ClientState}) ->
     bounce_check(State, ClientState);
+handle_msg(queue_drain_check, {State, ClientState}) ->
+    maybe_bounce(State, ClientState, true);
+handle_msg({set_bounce_event, Fun}, {State, ClientState}) when is_function(Fun, 3); Fun==undefined ->
+    {ok, {State#state{on_bounce_event = Fun}, ClientState}};
+handle_msg({next_bounce, Pid, Ref}, {#state{bounce_interval = infinity}, _} = TupState) ->
+    Pid ! {Ref, infinity},
+    {ok, TupState};
+handle_msg({next_bounce, Pid, Ref}, {#state{next_bounce = Time}, _} = TupState) ->
+    Pid ! {Ref, Time - now_time_ms()},
+    {ok, TupState};
 handle_msg(Msg, {#state{pool_name = PoolName} = State, ClientState}) ->
     ?WARN(PoolName, "unknown msg: ~p", [Msg]),
     {ok, {State, ClientState}}.
@@ -453,17 +525,17 @@ connect(Protocol, Address, Port, SocketOptions, PoolName) ->
                 {ok, Socket} ->
                     {ok, Socket};
                 {error, Reason} ->
-                    ?WARN(PoolName, "~s:~w connect error: ~p", [Address, Port, Reason]),
+                    ?WARN(PoolName, "~s:~w ~w connect error (~w): ~p", [Address, Port, Protocol, Ip, Reason]),
                     {error, Reason}
             end;
         {error, Reason} ->
-            ?WARN(PoolName, "getaddrs error: ~p", [Reason]),
+            ?WARN(PoolName, "getaddrs ~p error: ~p", [Address, Reason]),
             {error, Reason}
     end.
 
 handle_msg_close(S, #state {socket = S, pool_name = PoolName} = State, ClientState) ->
     log_metrics(State, shackle_close_total),
-    ?WARN(PoolName, "SrvIdx=~s: connection closed", [State#state.srv_idx]),
+    ?WARN(PoolName, "#~s: connection closed", [State#state.srv_idx]),
     close(State, ClientState);
 handle_msg_close(_Socket, State, ClientState) ->
     log_metrics(State, shackle_close_total),
@@ -598,7 +670,7 @@ wrap(Cast) ->
 
 reply(Reply, Casts, State, ClientState) ->
     reply2(Reply, Casts, State),
-    maybe_bounce(State, ClientState).
+    maybe_bounce(State, ClientState, false).
 
 %% For batch replies Pid is the same in all casts in the list.
 %% TODO: Optimize the batch replies to deliver them as 1 message to Pid?
@@ -647,14 +719,16 @@ schedule_bounce(#state{bounce_interval = MSec} = State) ->
     erlang:send_after(MSec, self(), bounce_connection),
     State#state{next_bounce = Time}.
 
-maybe_bounce(#state{bounce_state = draining} = State, ClientState) ->
+maybe_bounce(#state{bounce_state = BS} = State, ClientState, AddTimer) when
+    BS == draining; BS == awaiting_empty_queue
+->
     %% If we are in the process of waiting for a connection bounce and draining
     %% the queue, when the queue has been drained, proceed with the bounce.
     case shackle_queue:length(State#state.queue) of
         0 ->
             Pool = State#state.pool_name,
             shackle_pool:finalize_bounce(Pool),
-            ?LOG_DEBUG("[~p] connection ~p bounce finalized - reconnecting", [Pool, State#state.id]),
+            ?LOG_DEBUG("[~p] connection bounce finalized - reconnecting", [State#state.name]),
             ?ON_BOUNCE_EVENT(State, #{
                 status => finalizing_bounce,
                 bounce_state => reconnecting,
@@ -663,16 +737,22 @@ maybe_bounce(#state{bounce_state = draining} = State, ClientState) ->
             }),
             close(State, ClientState, reconnecting);
         _N ->
-            ?ON_BOUNCE_EVENT(State, #{
-                status => awaiting_empty_queue,
-                queue_len => _N,
-                bounce_state => draining,
-                bounce_interval => State#state.bounce_interval,
-            src => {?MODULE, ?LINE}
-            }),
-            {ok, {State, ClientState}}
+            State1 =
+                if BS == draining; AddTimer ->
+                    ?ON_BOUNCE_EVENT(State, #{
+                        bounce_state => BS,
+                        queue_len => _N,
+                        bounce_interval => State#state.bounce_interval,
+                        src => {?MODULE, ?LINE}
+                    }),
+                    Ref = erlang:send_after(1000, self(), queue_drain_check),
+                    State#state{drain_timer_ref = Ref, bounce_state = awaiting_empty_queue};
+                true ->
+                    State
+                end,
+            {ok, {State1#state{bounce_state = awaiting_empty_queue}, ClientState}}
     end;
-maybe_bounce(State, ClientState) ->
+maybe_bounce(State, ClientState, _) ->
     {ok, {State, ClientState}}.
 
 %% If bounce timeout is set and the current time exceeds the timeout,
@@ -693,9 +773,9 @@ bounce_check(#state{bounce_state = waiting, next_bounce = Time} = State, ClientS
                         bounce_interval => State#state.bounce_interval,
                         src => {?MODULE, ?LINE}
                     }),
-                    ?LOG_DEBUG("[~p] connection ~p bounce initiated", [State#state.pool_name, State#state.id]),
+                    ?LOG_DEBUG("[~p] connection bounce initiated", [State#state.name, State#state.id]),
                     shackle_status:disable(State#state.id),
-                    maybe_bounce(State#state{bounce_state = draining}, ClientState);
+                    maybe_bounce(State#state{bounce_state = draining}, ClientState, false);
                 false ->
                     %% Another connection is bouncing, wait for 1-4 seconds and
                     %% try bouncing again

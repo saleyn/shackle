@@ -19,7 +19,8 @@
     default_options/2,
     merge_options/1,
     merge_options/2,
-    merge_options/3
+    merge_options/3,
+    on_bounce_event/3
 ]).
 
 %% NOTE: use ?WARN(PoolName, Format, Data) macro instead
@@ -84,6 +85,13 @@ random_element(L) when is_list(L) ->
 
 warning_msg(Pool, Format, Data) ->
     ?WARN(Pool, Format, Data).
+
+%% @doc Function used for troubleshooting shackle bounce event feature.
+%% It can be set in configuration
+%% `{shackle, [{on_bounce_event, {shackle_utils, on_bounce_event}}]}'.
+-spec on_bounce_event(atom(), integer(), map()) -> ok.
+on_bounce_event(Pool, SrvIdx, Event) ->
+    ?LOG_INFO("[~p:~w] shackle bounce event: ~p", [Pool, SrvIdx, Event]).
 
 %% @doc Return global shackle options that get overriden by `Options' that are
 %% provided by a shackle client library upon startup of a client or pool.

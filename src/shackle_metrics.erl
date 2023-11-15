@@ -31,6 +31,11 @@
         {labels, [client, pool, server, reason]}
     ],
     [
+        {name, shackle_socket_total},
+        {help, "Count of shackle socket connect/close/bounce events"},
+        {labels, [client, pool, server, event]}
+    ],
+    [
         {name, shackle_reply_total},
         {help, "Count of shackle replies"},
         {labels, [client, pool, server]}

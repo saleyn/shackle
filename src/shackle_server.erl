@@ -282,7 +282,6 @@ handle_msg({request, [#cast {timeout = _Timeout} = Cast, Request]},
                     PoolName = State#state.pool_name,
                     log_metrics(State, shackle_error_total, <<"send error">>),
                     ?WARN(PoolName, "SrvIdx=~s send error: ~p", [State#state.srv_idx, Reason]),
-                    Protocol:close(Socket),
                     {ok, {State3, ClientState3}} =
                         reply({error, socket_closed}, [Cast], State, ClientState2),
                     close(State3, ClientState3)
@@ -312,7 +311,6 @@ handle_msg({request, [Casts, Requests, Count]}, {#state {client = Client} = Stat
                     log_metrics(State, shackle_error_total, <<"send error">>),
                     ?WARN(State#state.pool_name, "SrvIdx=~s send error: ~p",
                         [State#state.srv_idx, Reason]),
-                    Protocol:close(Socket),
                     {ok, {State3, ClientState3}} =
                         reply({error, socket_closed}, Casts, State, ClientState2),
                     close(State3, ClientState3)
@@ -372,6 +370,7 @@ handle_msg(?MSG_CONNECT, {#state {
                         bounce_interval => State1#state.bounce_interval,
                         src => {?MODULE, ?LINE}
                     }),
+                    log_metrics(State, shackle_socket_total, <<"connect">>),
                     {ok, {State1, ClientState2}};
                 {error, _Reason, ClientState2} ->
                     log_metrics(State, shackle_error_total, <<"client connect error">>),
@@ -386,9 +385,7 @@ handle_msg({timeout, ExtRequestId}, {#state {
         client = Client,
         id = Id,
         pool_name = PoolName,
-        protocol = Protocol,
-        queue = Queue,
-        socket = Socket
+        queue = Queue
     } = State, ClientState}) ->
 
     log_metrics(State, shackle_error_total, <<"timeout">>),
@@ -400,14 +397,12 @@ handle_msg({timeout, ExtRequestId}, {#state {
                 {error, Reason, ClientState2} ->
                     log_metrics(State, shackle_error_total, <<"handle_timeout error">>),
                     ?WARN(PoolName, "handle_timeout error: ~p", [Reason]),
-                    Protocol:close(Socket),
                     close(State, ClientState2)
             catch
                 ?EXCEPTION(E, R, Stacktrace) ->
                     log_metrics(State, shackle_error_total, <<"handle_timeout exception">>),
                     ?WARN(PoolName, "handle_timeout error: ~p:~p~n  ~p~n",
                         [E, R, ?GET_STACK(Stacktrace)]),
-                    Protocol:close(Socket),
                     close(State, ClientState)
             end;
         false ->
@@ -515,7 +510,16 @@ close(#state {id = Id} = State, ClientState, Reason)
         src => {?MODULE, ?LINE}
     }),
     reply_all({error, socket_closed}, State, ClientState),
-    reconnect(State#state{socket = undefined, bounce_state = Reason}, ClientState).
+    State1 = close_socket(State#state{bounce_state = Reason}),
+    reconnect(State1, ClientState).
+
+close_socket(#state{socket = undefined} = State) ->
+    State;
+close_socket(#state{socket = Socket, protocol = Protocol, srv_idx = Idx} = State) ->
+    ?WARN(State#state.pool_name, "#~s: connection closed", [Idx]),
+    Protocol:close(Socket),
+    log_metrics(State, shackle_socket_total, <<"close">>),
+    State#state{socket = undefined}.
 
 connect(Protocol, Address, Port, SocketOptions, PoolName) ->
     case inet:getaddrs(Address, inet) of
@@ -533,9 +537,7 @@ connect(Protocol, Address, Port, SocketOptions, PoolName) ->
             {error, Reason}
     end.
 
-handle_msg_close(S, #state {socket = S, pool_name = PoolName} = State, ClientState) ->
-    log_metrics(State, shackle_close_total),
-    ?WARN(PoolName, "#~s: connection closed", [State#state.srv_idx]),
+handle_msg_close(S, #state {socket = S} = State, ClientState) ->
     close(State, ClientState);
 handle_msg_close(_Socket, State, ClientState) ->
     log_metrics(State, shackle_close_total),
@@ -544,7 +546,6 @@ handle_msg_close(_Socket, State, ClientState) ->
 handle_msg_data(Socket, Data, #state {
         client = Client,
         pool_name = PoolName,
-        protocol = Protocol,
         socket = Socket
     } = State, ClientState) ->
     log_metrics(State, shackle_received_bytes_total, byte_size(Data)),
@@ -556,13 +557,11 @@ handle_msg_data(Socket, Data, #state {
             {ok, {State, ClientState2}};
         {error, Reason, ClientState2} ->
             ?WARN(PoolName, "handle_data error: ~p", [Reason]),
-            Protocol:close(Socket),
             close(State, ClientState2)
     catch
         ?EXCEPTION(E, R, Stacktrace) ->
             ?WARN(PoolName, "handle_data crash: ~p:~p~n~p~n",
                 [E, R, ?GET_STACK(Stacktrace)]),
-            Protocol:close(Socket),
             close(State, ClientState)
     end;
 handle_msg_data(_Socket, _Data, State, ClientState) ->
@@ -570,13 +569,11 @@ handle_msg_data(_Socket, _Data, State, ClientState) ->
 
 handle_msg_error(Socket, Reason, #state {
         socket = Socket,
-        pool_name = PoolName,
-        protocol = Protocol
+        pool_name = PoolName
     } = State, ClientState) ->
 
     log_metrics(State, shackle_error_total, <<"socket error">>),
     ?WARN(PoolName, "connection error: ~p", [Reason]),
-    Protocol:close(Socket),
     close(State, ClientState);
 handle_msg_error(_Socket, _Reason, State, ClientState) ->
     {ok, {State, ClientState}}.
@@ -733,8 +730,9 @@ maybe_bounce(#state{bounce_state = BS} = State, ClientState, AddTimer) when
                 status => finalizing_bounce,
                 bounce_state => reconnecting,
                 bounce_interval => State#state.bounce_interval,
-            src => {?MODULE, ?LINE}
+                src => {?MODULE, ?LINE}
             }),
+            log_metrics(State, shackle_socket_total, <<"bounce">>),
             close(State, ClientState, reconnecting);
         _N ->
             State1 =

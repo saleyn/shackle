@@ -721,8 +721,8 @@ maybe_bounce(#state{bounce_state = BS} = State, ClientState, AddTimer) when
 ->
     %% If we are in the process of waiting for a connection bounce and draining
     %% the queue, when the queue has been drained, proceed with the bounce.
-    case shackle_queue:length(State#state.queue) of
-        0 ->
+    case shackle_queue:empty(State#state.queue, State#state.id) of
+        true ->
             Pool = State#state.pool_name,
             shackle_pool:finalize_bounce(Pool),
             ?LOG_DEBUG("[~p] connection bounce finalized - reconnecting", [State#state.name]),
@@ -734,12 +734,11 @@ maybe_bounce(#state{bounce_state = BS} = State, ClientState, AddTimer) when
             }),
             log_metrics(State, shackle_socket_total, <<"bounce">>),
             close(State, ClientState, reconnecting);
-        _N ->
+        false ->
             State1 =
                 if BS == draining; AddTimer ->
                     ?ON_BOUNCE_EVENT(State, #{
                         bounce_state => BS,
-                        queue_len => _N,
                         bounce_interval => State#state.bounce_interval,
                         src => {?MODULE, ?LINE}
                     }),

@@ -12,7 +12,8 @@
     remove/3,
     table_name/1,
     pending/2,
-    length/1
+    length/1,
+    empty/2
 ]).
 
 %% internal
@@ -73,6 +74,11 @@ pending(Table, ServerId) ->
 -spec length(Table :: shackle:table()) -> non_neg_integer().
 length(Table) ->
     ets:info(Table, size).
+
+-spec empty(Table :: shackle:table(), ServerId :: shackle_server:id()) ->
+    boolean().
+empty(Table, ServerId) ->
+    pending(Table, ServerId) == [].
 
 %% private
 ets_match_take(Table, Match) ->

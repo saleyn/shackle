@@ -14,7 +14,7 @@
     ok.
 
 close(Socket) ->
-    catch gen_tcp:close(Socket).
+    gen_tcp:close(Socket).
 
 -spec connect(shackle:inet_address(), shackle:inet_port(), shackle:socket_options()) ->
     {ok, shackle:socket()} | {error, atom()}.

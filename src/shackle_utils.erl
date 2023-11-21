@@ -20,7 +20,11 @@
     merge_options/1,
     merge_options/2,
     merge_options/3,
-    on_bounce_event/3
+    on_bounce_event/3,
+    list_peers/0,
+    list_peers/1,
+    peername/1,
+    sock_owner/1
 ]).
 
 %% NOTE: use ?WARN(PoolName, Format, Data) macro instead
@@ -85,6 +89,66 @@ random_element(L) when is_list(L) ->
 
 warning_msg(Pool, Format, Data) ->
     ?WARN(Pool, Format, Data).
+
+%% @doc List sockets grouped by peer address/port, in the descending order of count
+%% This function is mainly used for debugging.
+-spec list_peers() -> [{integer(), binary()}].
+list_peers() ->
+    Endpoints = lists:filtermap(fun(S) ->
+        case peername(S) of
+            PN when is_binary(PN) ->
+                {true, PN};
+            _ ->
+                false
+        end
+    end, sockets()),
+    M = lists:foldl(fun(PN, M) -> maps:update_with(PN, fun(V) -> V+1 end, 1, M) end, #{}, Endpoints),
+    L = lists:sort(fun({_, V1}, {_, V2}) -> V2 =< V1 end, maps:to_list(M)),
+    [{V, PN} || {PN, V} <- L].
+
+-spec list_peers(non_neg_integer()) -> list().
+list_peers(Limit) when is_integer(Limit) ->
+    lists:sublist(list_peers(), Limit).
+
+-spec peername(port() | tuple()) -> string().
+peername(S) when is_port(S) ->
+    case inet:peername(S) of
+        {ok, {A, P}} ->
+            list_to_binary(lists:flatten(io_lib:format("~s:~w", [inet_parse:ntoa(A), P])));
+        {error, Reason} ->
+            Reason
+    end;
+peername({_, _, {_Pid, {'$socket', _} = S}}) ->
+    peername(S);
+peername(S) ->
+    case socket:peername(S) of
+        {ok, #{addr := A, port := P}} ->
+            list_to_binary(lists:flatten(io_lib:format("~s:~w", [inet_parse:ntoa(A), P])));
+        {error, Reason} ->
+            Reason
+    end.
+
+sockets() ->
+    socket:which_sockets() ++
+    port_list("tcp_inet") ++
+    port_list("udp_inet").
+
+sock_info(S) when is_port(S) -> inet:info(S);
+sock_info({_, _, {_Pid, {'$socket', _} = S}}) -> sock_info(S);
+sock_info(S) -> socket:info(S).
+
+-spec sock_owner(port() | tuple()) -> pid().
+sock_owner(S) ->
+    maps:get(owner, sock_info(S), not_found).
+
+port_list(Name) ->
+    lists:filter(
+        fun(Port) ->
+            case erlang:port_info(Port, name) of
+            {name, Name} -> true;
+            _ -> false
+            end
+        end, erlang:ports()).
 
 %% @doc Function used for troubleshooting shackle bounce event feature.
 %% It can be set in configuration

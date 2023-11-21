@@ -200,6 +200,8 @@ init(Name, Parent, Opts) ->
     ReconnectState = reconnect_state(ServerOpts1),
     BounceInt =
         case ?LOOKUP(bounce_interval_secs, ServerOpts1, ?DEFAULT_BOUNCE_INTERVAL) of
+            _ when Protocol == shackle_udp ->
+                infinity;
             I when is_integer(I) ->
                 I * 1000;
             infinity = I ->
@@ -574,9 +576,7 @@ handle_msg_error(Socket, Reason, #state {
 
     log_metrics(State, shackle_error_total, <<"socket error">>),
     ?WARN(PoolName, "connection error: ~p", [Reason]),
-    close(State, ClientState);
-handle_msg_error(_Socket, _Reason, State, ClientState) ->
-    {ok, {State, ClientState}}.
+    close(State, ClientState).
 
 process_responses([], State, ClientState) ->
     {ok, {State, ClientState}};

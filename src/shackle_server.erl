@@ -88,6 +88,11 @@
     sock_id          :: integer()
 }).
 
+-ifndef(WITH_SHACKLE_TRACE_LOG).
+
+-else.
+-endif.
+
 -type state() :: #state {}.
 -type client_state() :: term().
 -type init_options() :: term().
@@ -192,7 +197,7 @@ init(Name, Parent, Opts) ->
     {PoolName, Index, Client, ServerOpts} = Opts,
     ServerOpts1 = shackle_utils:default_options(client, ServerOpts),
 
-    self() ! {?MSG_CONNECT, ?LINE},
+    self() ! ?MSG_CONNECT,
     Id = {PoolName, Index},
     SrvIdxBin = integer_to_binary(Index),
     InitOptions = ?LOOKUP(init_options, ServerOpts1, ?DEFAULT_INIT_OPTS),
@@ -201,19 +206,7 @@ init(Name, Parent, Opts) ->
     Protocol = ?LOOKUP(protocol, ServerOpts1, ?DEFAULT_PROTOCOL),
     SocketOptions = ?LOOKUP(socket_options, ServerOpts1, ?DEFAULT_SOCKET_OPTS),
     ReconnectState = reconnect_state(ServerOpts1),
-    TraceLog =
-        case ?GET_ENV(trace_log, true) of
-            true ->
-                DefName = lists:takewhile(fun(C) -> C /= $@ end, atom_to_list(node())),
-                Path = application:get_env(rtb_gateway, log_path, "/var/log/" ++ DefName),
-                File = filename:join(filename:join(Path, "trace"), atom_to_list(Name) ++ ".log"),
-                ?LOG_INFO("Using shackle trace file ~s", [File]),
-                ok = filelib:ensure_dir(File),
-                {ok, FD} = file:open(File, [append, raw, binary, {delayed_write, 4096, 500}]),
-                FD;
-            false ->
-                undefined
-        end,
+    TraceLog = init_trace_log(),
     BounceInt =
         case ?LOOKUP(bounce_interval_secs, ServerOpts1, ?DEFAULT_BOUNCE_INTERVAL) of
             %_ when Protocol == shackle_udp ->
@@ -304,7 +297,7 @@ handle_msg({request, [#cast {timeout = _Timeout} = Cast, Request]},
                     ?WARN(PoolName, "SrvIdx=~s send error: ~p", [State#state.srv_idx, Reason]),
                     {ok, {State3, ClientState3}} =
                         reply({error, socket_closed}, [Cast], State, ClientState2),
-                    close(State3, ClientState3, {request_send_error, ?LINE})
+                    close(State3, ClientState3)
             end
     catch
         ?EXCEPTION(E, R, Stacktrace) ->
@@ -333,7 +326,7 @@ handle_msg({request, [Casts, Requests, Count]}, {#state {client = Client} = Stat
                         [State#state.srv_idx, Reason]),
                     {ok, {State3, ClientState3}} =
                         reply({error, socket_closed}, Casts, State, ClientState2),
-                    close(State3, ClientState3, {request_send_error, ?LINE})
+                    close(State3, ClientState3)
             end
     catch
         ?EXCEPTION(E, R, Stacktrace) ->
@@ -359,7 +352,7 @@ handle_msg({udp, Socket, _Ip, _InPortNo, Data}, {State, ClientState}) ->
     handle_msg_data(Socket, Data, State, ClientState);
 handle_msg({udp_error, Socket, Reason}, {State, ClientState}) ->
     handle_msg_error(Socket, Reason, State, ClientState);
-handle_msg({?MSG_CONNECT, Line}, {#state {
+handle_msg(?MSG_CONNECT, {#state {
         client = Client,
         id = Id,
         init_options = Init,
@@ -368,7 +361,7 @@ handle_msg({?MSG_CONNECT, Line}, {#state {
         reconnect_state = ReconnectState,
         socket = undefined
     } = State0, ClientState}) ->
-    trace(State0, connecting, {line, Line}),
+    trace(State0, connecting, ok),
     case connect(State0) of
         {ok, #state{socket = Socket} = State} ->
             case client(Client, PoolName, Init, Protocol, Socket) of
@@ -392,15 +385,15 @@ handle_msg({?MSG_CONNECT, Line}, {#state {
                     {ok, {State1, ClientState2}};
                 {error, _Reason, ClientState2} ->
                     log_metrics(State, shackle_error_total, <<"client connect error">>),
-                    State1 = close_socket(State, 'MSG_CONNECT'),
+                    State1 = close_socket(State),
                     reconnect(State1, ClientState2)
             end;
         {error, _Reason} ->
             log_metrics(State0, shackle_error_total, <<"socket connect error">>),
             reconnect(State0, ClientState)
     end;
-handle_msg({?MSG_CONNECT, Line}, {#state{socket = Sock} = State, ClientState}) ->
-    trace(State, connect_request_on_existing_socket, {line, Line, Sock}),
+handle_msg(?MSG_CONNECT, {#state{socket = Sock} = State, ClientState}) ->
+    trace(State, connect_request_on_existing_socket, Sock),
     {ok, {State, ClientState}};
 handle_msg({timeout, ExtRequestId}, {#state {
         client = Client,
@@ -418,13 +411,13 @@ handle_msg({timeout, ExtRequestId}, {#state {
                 {error, Reason, ClientState2} ->
                     log_metrics(State, shackle_error_total, <<"handle_timeout error">>),
                     ?WARN(PoolName, "handle_timeout error: ~p", [Reason]),
-                    close(State, ClientState2, {timeout_handle_error, Reason, ?LINE})
+                    close(State, ClientState2)
             catch
                 ?EXCEPTION(E, R, Stacktrace) ->
                     log_metrics(State, shackle_error_total, <<"handle_timeout exception">>),
                     ?WARN(PoolName, "handle_timeout error: ~p:~p~n  ~p~n",
                         [E, R, ?GET_STACK(Stacktrace)]),
-                    close(State, ClientState, {timeout_exception, R, ?LINE})
+                    close(State, ClientState)
             end;
         false ->
             case shackle_queue:remove(Queue, Id, ExtRequestId) of
@@ -470,7 +463,7 @@ handle_msg(Msg, {#state{pool_name = PoolName} = State, ClientState}) ->
     ok.
 
 terminate(_Reason, {#state{client = Client, pool_name = PoolName} = State, ClientState}) ->
-    close_socket(State, 'TERMINATE'),
+    close_socket(State),
     try Client:terminate(ClientState)
     catch
         ?EXCEPTION(E, R, Stacktrace) ->
@@ -533,9 +526,9 @@ client_setup(Client, PoolName, Protocol, Socket, ClientState) ->
             {error, client_crash, ClientState}
     end.
 
-close(State, ClientState, Stack) ->
-    close(State, ClientState, Stack, disconnected).
-close(#state {id = Id} = State, ClientState, Stack, Reason)
+close(State, ClientState) ->
+    close(State, ClientState, disconnected).
+close(#state {id = Id} = State, ClientState, Reason)
     when Reason == disconnected; Reason == reconnecting ->
     shackle_status:disable(Id),
     ?ON_BOUNCE_EVENT(State, #{
@@ -548,21 +541,16 @@ close(#state {id = Id} = State, ClientState, Stack, Reason)
         bounce_state = Reason,
         drain_timer_ref = undefined,
         bounce_timer_ref = undefined
-    }, Stack),
+    }),
     reply_all({error, socket_closed}, State1, ClientState),
     reconnect(State1, ClientState).
 
-close_socket(#state{socket = undefined} = State, _Stack) ->
+close_socket(#state{socket = undefined} = State) ->
     State;
-close_socket(#state{socket = Socket, protocol = Protocol, srv_idx = Idx} = State, Stack) ->
+close_socket(#state{socket = Socket, protocol = Protocol, srv_idx = Idx} = State) ->
     ?WARN(State#state.pool_name, "#~s: connection closed", [Idx]),
     Res = catch Protocol:close(Socket),
-    Info =
-        case Res of
-            ok -> ok;
-            _ -> try throw(1) catch throw:_:ST -> {Res, ST} end
-        end,
-    trace(State, close, [Info, Stack]),
+    trace(State, close, Res),
     log_metrics(State, shackle_socket_total, <<"close">>),
     State#state{socket = undefined}.
 
@@ -596,7 +584,8 @@ connect(#state {
 
 handle_msg_close(S, #state {socket = S} = State, ClientState) ->
     log_metrics(State, shackle_close_total),
-    close(State, ClientState, {handle_msg_close, ?LINE}).
+    trace(State, handle_msg_close, {S, ?LINE}),
+    close(State, ClientState).
 
 handle_msg_data(Socket, Data, #state {
         client = Client,
@@ -612,12 +601,12 @@ handle_msg_data(Socket, Data, #state {
             {ok, {State, ClientState2}};
         {error, Reason, ClientState2} ->
             ?WARN(PoolName, "handle_data error: ~p", [Reason]),
-            close(State, ClientState2, {handle_msg_data, ?LINE})
+            close(State, ClientState2)
     catch
         ?EXCEPTION(E, R, Stacktrace) ->
             ?WARN(PoolName, "handle_data crash: ~p:~p~n~p~n",
                 [E, R, ?GET_STACK(Stacktrace)]),
-            close(State, ClientState, {handle_msg_data_exception, ?LINE})
+            close(State, ClientState)
     end;
 handle_msg_data(_Socket, _Data, State, ClientState) ->
     {ok, {State, ClientState}}.
@@ -629,7 +618,7 @@ handle_msg_error(Socket, Reason, #state {
 
     log_metrics(State, shackle_error_total, <<"socket error">>),
     ?WARN(PoolName, "connection error: ~p", [Reason]),
-    close(State, ClientState, {handle_msg_error, ?LINE}).
+    close(State, ClientState).
 
 process_responses([], State, ClientState) ->
     {ok, {State, ClientState}};
@@ -696,7 +685,10 @@ reconnect_state_reset(#reconnect_state {} = ReconnectState) ->
 
 reconnect_timer(#state {bounce_state = reconnecting} = State0, ClientState) ->
     State = cancel_all_timers(State0),
-    Ref = erlang:send_after(0, self(), {?MSG_CONNECT, ?LINE}),
+    Ref = erlang:send_after(0, self(), ?MSG_CONNECT),
+    State#state.socket /= undefined andalso
+        ?LOG_WARNING("~w:~s reconnect_timer called with assigned socket",
+            [State#state.pool_name, State#state.srv_idx]),
     State1 = State#state {timer_ref = Ref, bounce_state = disconnected},
     {ok, {State1, ClientState}};
 
@@ -707,7 +699,10 @@ reconnect_timer(#state {reconnect_state = RState} = State0, ClientState)  ->
     State = cancel_all_timers(State0),
     RState2 = shackle_backoff:timeout(RState),
     Timeout = RState2#reconnect_state.current,
-    Ref = erlang:send_after(Timeout, self(), {?MSG_CONNECT, ?LINE}),
+    Ref = erlang:send_after(Timeout, self(), ?MSG_CONNECT),
+    State#state.socket /= undefined andalso
+        ?LOG_WARNING("~w:~s reconnect_timer called with assigned socket",
+            [State#state.pool_name, State#state.srv_idx]),
     {ok, {State#state {reconnect_state = RState2, timer_ref = Ref}, ClientState}}.
 
 cancel_all_timers(State) ->
@@ -793,7 +788,7 @@ maybe_bounce(#state{bounce_state = BS, drain_timer_ref = OldTimerRef} = State, C
                 src => {?MODULE, ?LINE}
             }),
             log_metrics(State, shackle_socket_total, <<"bounce">>),
-            close(State, ClientState, {maybe_bounce, ?LINE}, reconnecting);
+            close(State, ClientState, reconnecting);
         false ->
             State1 =
                 if BS == draining, OldTimerRef == undefined ->
@@ -881,6 +876,21 @@ log_metrics2(Metric, Args, N) ->
 now_time_ms() ->
     os:system_time(millisecond).
 
+-ifdef(WITH_SHACKLE_TRACE_LOG).
+init_trace_log() ->
+    case ?GET_ENV(trace_log, true) of
+        true ->
+            DefName = lists:takewhile(fun(C) -> C /= $@ end, atom_to_list(node())),
+            Path = ?GET_ENV(log_path, "/var/log/" ++ DefName),
+            File = filename:join(filename:join(Path, "trace"), atom_to_list(Name) ++ ".log"),
+            ?LOG_INFO("Using shackle trace file ~s", [File]),
+            ok = filelib:ensure_dir(File),
+            {ok, FD} = file:open(File, [append, raw, binary, {delayed_write, 4096, 500}]),
+            FD;
+        false ->
+            undefined
+    end.
+
 trace(#state{trace_log = undefined}, _Event, _Args) ->
     ok;
 trace(#state{socket = undefined}, _Event, _Args) ->
@@ -904,3 +914,12 @@ sock_info(S) -> S.
 i2b(I) when I < 9  -> <<$0, ($0+I)>>;
 i2b(I) when I < 99 -> <<($0 + (I div 10)), ($0 + (I rem 10))>>;
 i2b(I)             -> integer_to_binary(I).
+
+-else.
+
+init_trace_log() ->
+    undefined.
+
+trace(_, _, _) ->
+    ok.
+-endif.

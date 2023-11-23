@@ -20,6 +20,9 @@
 %%  <dd>Interval in seconds when a connection must be forcefully bounced.
 %%      Defaults to `infinity', which disables the bouncing feature. A
 %%      bounce is done on one connection at a time.</dd>
+%% <dt>bounce_udp</dt>
+%%  <dd>When true and bounce_interval_secs is an integer, will allow
+%%      bouncing of UDP connections</dd>
 %% <dt>on_bounce_event</dt>
 %%  <dd>A callback function called on various events related to connection
 %%      bouncing.</dd>
@@ -79,11 +82,19 @@
                         awaiting_empty_queue |      %% Awaiting for the request queue to empty
                         reconnecting |              %% Reconnecting to server
                         disconnected,               %% Disconnected from server
+    timer_ref        :: undefined | reference(),
+    bounce_timer_ref :: undefined | reference(),
     drain_timer_ref  :: undefined | reference(),    %% Timer reference of queue drain check
     on_bounce_event  :: undefined | function(),
     next_bounce      :: undefined | pos_integer(),  %% Epoch timestamp when to close connection
-    timer_ref        :: undefined | reference()
+    trace_log        :: undefined | term(),
+    sock_id          :: integer()
 }).
+
+-ifndef(WITH_SHACKLE_TRACE_LOG).
+
+-else.
+-endif.
 
 -type state() :: #state {}.
 -type client_state() :: term().
@@ -198,8 +209,12 @@ init(Name, Parent, Opts) ->
     Protocol = ?LOOKUP(protocol, ServerOpts1, ?DEFAULT_PROTOCOL),
     SocketOptions = ?LOOKUP(socket_options, ServerOpts1, ?DEFAULT_SOCKET_OPTS),
     ReconnectState = reconnect_state(ServerOpts1),
+    TraceLog = init_trace_log(),
+    BounceUDP = ?LOOKUP(bounce_udp, ServerOpts1, ?DEFAULT_BOUNCE_UDP),
     BounceInt =
         case ?LOOKUP(bounce_interval_secs, ServerOpts1, ?DEFAULT_BOUNCE_INTERVAL) of
+            _ when Protocol == shackle_udp, BounceUDP ->
+                infinity;
             I when is_integer(I) ->
                 I * 1000;
             infinity = I ->
@@ -243,7 +258,9 @@ init(Name, Parent, Opts) ->
         socket_options = SocketOptions,
         bounce_interval = BounceInt,
         on_bounce_event = OnBounceEvent,
-        bounce_state = waiting
+        bounce_state = waiting,
+        trace_log = TraceLog,
+        sock_id = 0
     }, undefined}}.
 
 -spec handle_msg(term(), {state(), client_state()}) ->
@@ -340,18 +357,17 @@ handle_msg({udp, Socket, _Ip, _InPortNo, Data}, {State, ClientState}) ->
 handle_msg({udp_error, Socket, Reason}, {State, ClientState}) ->
     handle_msg_error(Socket, Reason, State, ClientState);
 handle_msg(?MSG_CONNECT, {#state {
-        address = Address,
         client = Client,
         id = Id,
         init_options = Init,
         pool_name = PoolName,
-        port = Port,
         protocol = Protocol,
         reconnect_state = ReconnectState,
-        socket_options = SocketOptions
-    } = State, ClientState}) ->
-    case connect(Protocol, Address, Port, SocketOptions, PoolName) of
-        {ok, Socket} ->
+        socket = undefined
+    } = State0, ClientState}) ->
+    trace(State0, connecting, ok),
+    case connect(State0) of
+        {ok, #state{socket = Socket} = State} ->
             case client(Client, PoolName, Init, Protocol, Socket) of
                 {ok, ClientState2} ->
                     ReconnectState2 = reconnect_state_reset(ReconnectState),
@@ -359,7 +375,6 @@ handle_msg(?MSG_CONNECT, {#state {
                     shackle_status:enable(Id),
                     State1 = schedule_bounce(State#state{
                         reconnect_state = ReconnectState2,
-                        socket = Socket,
                         timer_ref = undefined,
                         bounce_state = waiting
                     }),
@@ -374,13 +389,16 @@ handle_msg(?MSG_CONNECT, {#state {
                     {ok, {State1, ClientState2}};
                 {error, _Reason, ClientState2} ->
                     log_metrics(State, shackle_error_total, <<"client connect error">>),
-                    Protocol:close(Socket),
-                    reconnect(State#state{socket = undefined}, ClientState2)
+                    State1 = close_socket(State),
+                    reconnect(State1, ClientState2)
             end;
         {error, _Reason} ->
-            log_metrics(State, shackle_error_total, <<"socket connect error">>),
-            reconnect(State, ClientState)
+            log_metrics(State0, shackle_error_total, <<"socket connect error">>),
+            reconnect(State0#state{socket = undefined}, ClientState)
     end;
+handle_msg(?MSG_CONNECT, {#state{socket = Sock} = State, ClientState}) ->
+    trace(State, connect_request_on_existing_socket, Sock),
+    {ok, {State, ClientState}};
 handle_msg({timeout, ExtRequestId}, {#state {
         client = Client,
         id = Id,
@@ -410,13 +428,29 @@ handle_msg({timeout, ExtRequestId}, {#state {
                 {ok, Cast, _TimerRef} ->
                     reply({error, timeout}, [Cast], State, ClientState);
                 {error, not_found} ->
-                    maybe_bounce(State, ClientState, false)
+                    maybe_bounce(State, ClientState)
             end
     end;
-handle_msg(bounce_connection, {State, ClientState}) ->
-    bounce_check(State, ClientState);
-handle_msg(queue_drain_check, {State, ClientState}) ->
-    maybe_bounce(State, ClientState, true);
+handle_msg({bounce_connection, Sock}, {#state{socket = Sock} = State, ClientState}) ->
+    bounce_check(State#state{bounce_timer_ref = undefined}, ClientState, false);
+handle_msg({bounce_connection, Sock}, {State, ClientState}) ->
+    trace(State, {bounce_connection, Sock}, wrong_socket),
+    ?WARN(State#state.pool_name, "#~s bounce connection timer for wrong socket ~p",
+        [State#state.srv_idx, Sock]),
+    log_metrics(State, shackle_error_total, <<"wrong socket bounce">>),
+    %% Ignore the error
+    {ok, {State, ClientState}};
+handle_msg(bounce_connection, {#state{bounce_timer_ref = Ref} = State, ClientState}) ->
+    %% Result of the bounce/1 API call
+    cancel_timer(Ref),
+    Now = now_time_ms(),
+    bounce_check(State#state{bounce_timer_ref = undefined, next_bounce = Now}, ClientState, true);
+handle_msg({queue_drain_check, S}, {#state{socket = S} = State, ClientState}) when S /= undefined ->
+    maybe_bounce(State#state{drain_timer_ref = undefined}, ClientState);
+handle_msg({queue_drain_check, Sock}, {State, ClientState}) ->
+    trace(State, {queue_drain_check, Sock}, wrong_socket),
+    ?WARN(State#state.pool_name, "queue drain check timer for wrong socket ~p", [Sock]),
+    {ok, {State#state{drain_timer_ref = undefined}, ClientState}};
 handle_msg({set_bounce_event, Fun}, {State, ClientState}) when is_function(Fun, 3); Fun==undefined ->
     {ok, {State#state{on_bounce_event = Fun}, ClientState}};
 handle_msg({next_bounce, Pid, Ref}, {#state{bounce_interval = infinity}, _} = TupState) ->
@@ -432,19 +466,17 @@ handle_msg(Msg, {#state{pool_name = PoolName} = State, ClientState}) ->
 -spec terminate(term(), term()) ->
     ok.
 
-terminate(_Reason, {#state {
-        client = Client,
-        pool_name = PoolName,
-        timer_ref = TimerRef
-    } = State, ClientState}) ->
-    cancel_timer(TimerRef),
+terminate(_Reason, {#state{client = Client, pool_name = PoolName} = State, ClientState}) ->
+    close_socket(State),
     try Client:terminate(ClientState)
     catch
         ?EXCEPTION(E, R, Stacktrace) ->
             ?WARN(PoolName, "terminate crash: ~p:~p~n  ~p~n",
                 [E, R, ?GET_STACK(Stacktrace)])
     end,
-    reply_all({error, shutdown}, State, undefined).
+    State1 = State#state{socket = undefined, bounce_state = disconnected},
+    reply_all({error, shutdown}, State1, undefined),
+    ok.
 
 %% private
 address(ClientOptions) ->
@@ -509,39 +541,52 @@ close(#state {id = Id} = State, ClientState, Reason)
         bounce_interval => State#state.bounce_interval,
         src => {?MODULE, ?LINE}
     }),
-    reply_all({error, socket_closed}, State, ClientState),
     State1 = close_socket(State#state{bounce_state = Reason}),
-    reconnect(State1, ClientState).
+    {ok, State2, ClientState2} =
+        reply_all({error, socket_closed}, State1, ClientState),
+    reconnect(State2, ClientState2).
 
 close_socket(#state{socket = undefined} = State) ->
     State;
 close_socket(#state{socket = Socket, protocol = Protocol, srv_idx = Idx} = State) ->
     ?WARN(State#state.pool_name, "#~s: connection closed", [Idx]),
-    Protocol:close(Socket),
+    Res = catch Protocol:close(Socket),
+    trace(State, close, Res),
     log_metrics(State, shackle_socket_total, <<"close">>),
     State#state{socket = undefined}.
 
-connect(Protocol, Address, Port, SocketOptions, PoolName) ->
+connect(#state {
+    address = Address,
+    srv_idx = ID,
+    pool_name = PoolName,
+    port = Port,
+    protocol = Protocol,
+    socket_options = SocketOptions
+} = State) ->
     case inet:getaddrs(Address, inet) of
         {ok, Ips} when Ips /= [] ->
             Ip = shackle_utils:random_element(Ips),
             case Protocol:connect(Ip, Port, SocketOptions) of
                 {ok, Socket} ->
-                    {ok, Socket};
+                    log_metrics(State, shackle_socket_total, <<"created">>),
+                    State1 = State#state{socket = Socket, sock_id = State#state.sock_id+1},
+                    trace(State1, connect, {ok, ?LINE}),
+                    {ok, State1};
                 {error, Reason} ->
-                    ?WARN(PoolName, "~s:~w ~w connect error (~w): ~p", [Address, Port, Protocol, Ip, Reason]),
+                    ?WARN(PoolName, "#~s ~s:~w ~w connect error (~w): ~p", [ID, Address, Port, Protocol, Ip, Reason]),
+                    trace(State#state{sock_id = State#state.sock_id+1}, connect_failed, {Reason, ?LINE}),
                     {error, Reason}
             end;
         {error, Reason} ->
             ?WARN(PoolName, "getaddrs ~p error: ~p", [Address, Reason]),
+            trace(State#state{sock_id = State#state.sock_id+1}, getaddr_error, {Reason, ?LINE}),
             {error, Reason}
     end.
 
 handle_msg_close(S, #state {socket = S} = State, ClientState) ->
-    close(State, ClientState);
-handle_msg_close(_Socket, State, ClientState) ->
     log_metrics(State, shackle_close_total),
-    {ok, {State, ClientState}}.
+    trace(State, handle_msg_close, {S, ?LINE}),
+    close(State, ClientState).
 
 handle_msg_data(Socket, Data, #state {
         client = Client,
@@ -553,8 +598,7 @@ handle_msg_data(Socket, Data, #state {
 
     try Client:handle_data(Data, ClientState) of
         {ok, Replies, ClientState2} ->
-            process_responses(Replies, State, ClientState),
-            {ok, {State, ClientState2}};
+            process_responses(Replies, State, ClientState2);
         {error, Reason, ClientState2} ->
             ?WARN(PoolName, "handle_data error: ~p", [Reason]),
             close(State, ClientState2)
@@ -574,9 +618,7 @@ handle_msg_error(Socket, Reason, #state {
 
     log_metrics(State, shackle_error_total, <<"socket error">>),
     ?WARN(PoolName, "connection error: ~p", [Reason]),
-    close(State, ClientState);
-handle_msg_error(_Socket, _Reason, State, ClientState) ->
-    {ok, {State, ClientState}}.
+    close(State, ClientState).
 
 process_responses([], State, ClientState) ->
     {ok, {State, ClientState}};
@@ -594,9 +636,8 @@ process_responses([{ExtRequestId, Reply} | T], #state {
                 Client, PoolName
             ], TimeDiff),
             erlang:cancel_timer(TimerRef),
-            {ok, {State2, ClientState2}} =
-                reply(Reply, [Cast], State, ClientState),
-            process_responses(T, State2, ClientState2);
+            {ok, {State2, CState2}} = reply(Reply, [Cast], State, ClientState),
+            process_responses(T, State2, CState2);
         {error, not_found} ->
             log_metrics(State, shackle_response_total, <<"not found">>),
             process_responses(T, State, ClientState)
@@ -637,28 +678,53 @@ reconnect_state(Options) ->
 reconnect_state_reset(undefined) ->
     undefined;
 reconnect_state_reset(#reconnect_state {} = ReconnectState) ->
-    ReconnectState#reconnect_state {
-        current = undefined
-    }.
+    ReconnectState#reconnect_state {current = undefined}.
+
+reconnect_timer(#state {bounce_state = reconnecting} = State0, ClientState) ->
+    State = cancel_all_timers(State0),
+    Ref = erlang:send_after(0, self(), ?MSG_CONNECT),
+    State#state.socket /= undefined andalso
+        ?LOG_WARNING("~w:~s reconnect_timer called with assigned socket",
+            [State#state.pool_name, State#state.srv_idx]),
+    State1 = State#state {timer_ref = Ref, bounce_state = disconnected},
+    ?ON_BOUNCE_EVENT(State1, #{
+        status => reconnect_timer,
+        bounce_state => State#state.bounce_state,
+        bounce_interval => 0,
+        socket => State#state.socket,
+        src => {?MODULE, ?LINE}
+    }),
+    {ok, {State1, ClientState}};
 
 reconnect_timer(#state {reconnect_state = undefined} = State, ClientState) ->
     {ok, {State, ClientState}};
-reconnect_timer(#state {bounce_state = reconnecting} = State, ClientState) ->
-    cancel_timer(State#state.timer_ref),
-    TimerRef = erlang:send_after(0, self(), ?MSG_CONNECT),
-    State1 = State#state {timer_ref = TimerRef, bounce_state = disconnected},
-    {ok, {State1, ClientState}};
 
-reconnect_timer(#state {reconnect_state = ReconState} = State, ClientState)  ->
-    cancel_timer(State#state.timer_ref),
-    ReconState2 = shackle_backoff:timeout(ReconState),
-    Timeout = ReconState2#reconnect_state.current,
-    TimerRef = erlang:send_after(Timeout, self(), ?MSG_CONNECT),
+reconnect_timer(#state {reconnect_state = RState} = State0, ClientState)  ->
+    State = cancel_all_timers(State0),
+    RState2 = shackle_backoff:timeout(RState),
+    Timeout = RState2#reconnect_state.current,
+    Ref = erlang:send_after(Timeout, self(), ?MSG_CONNECT),
+    State#state.socket /= undefined andalso
+        ?LOG_WARNING("~w:~s reconnect_timer called with assigned socket",
+            [State#state.pool_name, State#state.srv_idx]),
+    ?ON_BOUNCE_EVENT(State, #{
+        status => reconnect_timer,
+        bounce_state => State#state.bounce_state,
+        bounce_interval => Timeout,
+        socket => State#state.socket,
+        src => {?MODULE, ?LINE}
+    }),
+    {ok, {State#state {reconnect_state = RState2, timer_ref = Ref}, ClientState}}.
 
-    {ok, {State#state {
-        reconnect_state = ReconState2,
-        timer_ref = TimerRef
-    }, ClientState}}.
+cancel_all_timers(State) ->
+    cancel_timer(State#state.drain_timer_ref),
+    cancel_timer(State#state.bounce_timer_ref),
+    cancel_timer(State#state.timer_ref),
+    State#state{
+        drain_timer_ref = undefined,
+        bounce_timer_ref = undefined,
+        timer_ref = undefined
+    }.
 
 wrap(Casts) when is_list(Casts) ->
     Casts;
@@ -667,7 +733,7 @@ wrap(Cast) ->
 
 reply(Reply, Casts, State, ClientState) ->
     reply2(Reply, Casts, State),
-    maybe_bounce(State, ClientState, false).
+    maybe_bounce(State, ClientState).
 
 %% For batch replies Pid is the same in all casts in the list.
 %% TODO: Optimize the batch replies to deliver them as 1 message to Pid?
@@ -686,12 +752,12 @@ reply_all(Reply, #state {id = Id, queue = Queue} = State, ClientState) ->
     Requests = shackle_queue:clear(Queue, Id),
     reply_all(Reply, Requests, State, ClientState).
 
-reply_all(_Reply, [], _State, _ClientState) ->
-    ok;
+reply_all(_Reply, [], State, ClientState) ->
+    {ok, State, ClientState};
 reply_all(Reply, [{Cast, TimerRef} | T], State, ClientState) ->
     erlang:cancel_timer(TimerRef),
-    reply(Reply, [Cast], State, ClientState),
-    reply_all(Reply, T, State, ClientState).
+    {ok, {State1, ClientState1}} = reply(Reply, [Cast], State, ClientState),
+    reply_all(Reply, T, State1, ClientState1).
 
 handle_request_ids_from_client(ExtRequestIds, Casts, State, ClientState) ->
     ExtRequestIdsCasts = lists:zip(ExtRequestIds, Casts),
@@ -711,12 +777,12 @@ set_receive_timeout(Queue, Id, ExtRequestId,
 
 schedule_bounce(#state{bounce_interval = infinity} = State) ->
     State;
-schedule_bounce(#state{bounce_interval = MSec} = State) ->
+schedule_bounce(#state{bounce_interval = MSec, socket = Sock} = State) ->
     Time = now_time_ms() + MSec,
-    erlang:send_after(MSec, self(), bounce_connection),
-    State#state{next_bounce = Time}.
+    Ref = erlang:send_after(MSec, self(), {bounce_connection, Sock}),
+    State#state{next_bounce = Time, bounce_timer_ref = Ref}.
 
-maybe_bounce(#state{bounce_state = BS} = State, ClientState, AddTimer) when
+maybe_bounce(#state{bounce_state = BS, drain_timer_ref = OldTimerRef} = State, ClientState) when
     BS == draining; BS == awaiting_empty_queue
 ->
     %% If we are in the process of waiting for a connection bounce and draining
@@ -733,31 +799,39 @@ maybe_bounce(#state{bounce_state = BS} = State, ClientState, AddTimer) when
                 src => {?MODULE, ?LINE}
             }),
             log_metrics(State, shackle_socket_total, <<"bounce">>),
-            close(State, ClientState, reconnecting);
+            close(State#state{bounce_state = reconnecting}, ClientState, reconnecting);
         false ->
             State1 =
-                if BS == draining; AddTimer ->
+                if BS == draining, OldTimerRef == undefined ->
                     ?ON_BOUNCE_EVENT(State, #{
+                        status => awaiting_empty_queue,
                         bounce_state => BS,
                         bounce_interval => State#state.bounce_interval,
+                        queue_drain_timer => OldTimerRef,
                         src => {?MODULE, ?LINE}
                     }),
-                    Ref = erlang:send_after(1000, self(), queue_drain_check),
+                    Ref = erlang:send_after(1000, self(), {queue_drain_check, State#state.socket}),
                     State#state{drain_timer_ref = Ref, bounce_state = awaiting_empty_queue};
                 true ->
                     State
                 end,
-            {ok, {State1#state{bounce_state = awaiting_empty_queue}, ClientState}}
+            {ok, {State1, ClientState}}
     end;
-maybe_bounce(State, ClientState, _) ->
+maybe_bounce(State, ClientState) ->
     {ok, {State, ClientState}}.
 
 %% If bounce timeout is set and the current time exceeds the timeout,
 %% enter the connection draining state
-bounce_check(#state{bounce_interval = I, socket = Sock} = State, ClientState)
+bounce_check(#state{bounce_interval = I, socket = Sock} = State, ClientState, _Force = false)
     when I == infinity; Sock == undefined ->
     {ok, {State, ClientState}};
-bounce_check(#state{bounce_state = waiting, next_bounce = Time} = State, ClientState) ->
+bounce_check(#state{
+        bounce_state = waiting,
+        next_bounce = Time,
+        socket = Sock,
+        bounce_timer_ref = undefined
+    } = State, ClientState, _)
+->
     Interval = Time - now_time_ms(),
     case Interval =< 0 of
         true ->
@@ -772,7 +846,7 @@ bounce_check(#state{bounce_state = waiting, next_bounce = Time} = State, ClientS
                     }),
                     ?LOG_DEBUG("[~p] connection bounce initiated", [State#state.name, State#state.id]),
                     shackle_status:disable(State#state.id),
-                    maybe_bounce(State#state{bounce_state = draining}, ClientState, false);
+                    maybe_bounce(State#state{bounce_state = draining}, ClientState);
                 false ->
                     %% Another connection is bouncing, wait for 1-4 seconds and
                     %% try bouncing again
@@ -785,8 +859,8 @@ bounce_check(#state{bounce_state = waiting, next_bounce = Time} = State, ClientS
                         bounce_interval => State#state.bounce_interval,
                         src => {?MODULE, ?LINE}
                     }),
-                    erlang:send_after(NewInterval, self(), bounce_connection),
-                    {ok, {State, ClientState}}
+                    Ref = erlang:send_after(NewInterval, self(), {bounce_connection, Sock}),
+                    {ok, {State#state{bounce_timer_ref = Ref}, ClientState}}
             end;
         false ->
             ?ON_BOUNCE_EVENT(State, #{
@@ -796,10 +870,10 @@ bounce_check(#state{bounce_state = waiting, next_bounce = Time} = State, ClientS
                 bounce_interval => State#state.bounce_interval,
                 src => {?MODULE, ?LINE}
             }),
-            erlang:send_after(Interval, self(), bounce_connection),
-            {ok, {State, ClientState}}
+            Ref = erlang:send_after(Interval, self(), {bounce_connection, Sock}),
+            {ok, {State#state{bounce_timer_ref = Ref}, ClientState}}
     end;
-bounce_check(State, ClientState) ->
+bounce_check(State, ClientState, _) ->
     {ok, {State, ClientState}}.
 
 log_metrics(State, Metric) ->
@@ -814,3 +888,51 @@ log_metrics2(Metric, Args, N) ->
 
 now_time_ms() ->
     os:system_time(millisecond).
+
+-ifdef(WITH_SHACKLE_TRACE_LOG).
+init_trace_log() ->
+    case ?GET_ENV(trace_log, true) of
+        true ->
+            DefName = lists:takewhile(fun(C) -> C /= $@ end, atom_to_list(node())),
+            Path = ?GET_ENV(log_path, "/var/log/" ++ DefName),
+            File = filename:join(filename:join(Path, "trace"), atom_to_list(Name) ++ ".log"),
+            ?LOG_INFO("Using shackle trace file ~s", [File]),
+            ok = filelib:ensure_dir(File),
+            {ok, FD} = file:open(File, [append, raw, binary, {delayed_write, 4096, 500}]),
+            FD;
+        false ->
+            undefined
+    end.
+
+trace(#state{trace_log = undefined}, _Event, _Args) ->
+    ok;
+trace(#state{socket = undefined}, _Event, _Args) ->
+    ok;
+trace(#state{trace_log = FD, socket = Sock, sock_id = ID}, Event, Args) ->
+    TS = os:system_time(microsecond),
+    {{Y,M,D},{HH,MM,SS}} = erlang:universaltime_to_localtime(erlang:posixtime_to_universaltime(TS div 1_000_000)),
+    Endpoint = try shackle_utils:peername(Sock) catch _ -> "nil" end,
+    Owner = try shackle_utils:sock_owner(Sock) catch _ -> "nil" end,
+    EvID = case Event of connecting -> '-'; _ -> ID end,
+    ok = file:write(FD, [
+        i2b(Y), i2b(M), i2b(D), $-, i2b(HH), $:, i2b(MM), $:, i2b(SS), $.,
+        io_lib:format("~.6.0w ~w ~p/~p ~p ~s ~w ~256p\n",
+            [TS rem 1_000_000, EvID, self(), Owner, sock_info(Sock), Endpoint, Event, Args])
+    ]).
+
+sock_info(S) when is_port(S) -> S;
+sock_info({_, _, {_Pid, {'$socket', Ref}}}) -> Ref;
+sock_info(S) -> S.
+
+i2b(I) when I < 9  -> <<$0, ($0+I)>>;
+i2b(I) when I < 99 -> <<($0 + (I div 10)), ($0 + (I rem 10))>>;
+i2b(I)             -> integer_to_binary(I).
+
+-else.
+
+init_trace_log() ->
+    undefined.
+
+trace(_, _, _) ->
+    ok.
+-endif.

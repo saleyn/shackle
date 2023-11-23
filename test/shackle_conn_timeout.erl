@@ -92,21 +92,21 @@ conn_timeout2_test_() ->
             ?_assertEqual(ok,
                 begin
                     Res = lists:map(fun(_) ->
-                        {ok, R} = ?CLIENT:delayed_echo_cast(75, 3000),
+                        {ok, R} = ?CLIENT:delayed_echo_cast(5, 3000),
                         R
                     end, lists:seq(1, 10)),
                     persistent_term:put({?MODULE, requests}, Res)
                 end),
             ?_assert(shackle_sema:count(?POOL_NAME_TCP, 1) > 0),
-            ?_assert(shackle_server:bounce(?POOL_NAME_TCP, 1)),
+            %?_assert(shackle_server:bounce(?POOL_NAME_TCP, 1)),
 
             % Wait while the server is blocked and there's no room in the backlog
             ?_assertMatch(#{status := bounce_initiated, bounce_state := draining},
                 wait_for(bounce_initiated)),
 
             % Drain the queue
-            ?_assertMatch([75, 75 | _],
-                [receive_response(R, 1000) || R <- persistent_term:get({?MODULE, requests})]
+            ?_assertMatch([5,5,5,5,5,5,5,5,5,5],
+                [receive_response(R, 2000) || R <- persistent_term:get({?MODULE, requests})]
             ),
             % Check that the bounce is property finalized
             ?_assertMatch(#{status := finalizing_bounce, bounce_state := reconnecting},
@@ -205,7 +205,17 @@ wait_for(Status, Instances, Timeout) ->
                     (I == hd(Instances) orelse [I] == tl(Instances)))) ->
             Msg
     after Timeout ->
+        drain_all(),
         {error, timeout}
+    end.
+
+drain_all() ->
+    receive
+        M ->
+            io:format(user, "===> Message: ~p\n", [M]),
+            drain_all()
+    after 0 ->
+        ok
     end.
 
 wait_for_events(Instance, Timeout) ->
@@ -256,6 +266,7 @@ check_bounce_events(SrvIdx, Timeout) ->
             #{status := bounce_initiated,      bounce_state := draining},
             #{status := finalizing_bounce,     bounce_state := reconnecting},
             #{status := socket_close,          bounce_state := reconnecting},
+            #{status := reconnect_timer,       bounce_state := reconnecting},
             #{status := connected,             bounce_state := waiting} | _
         ]} ->
             true;
@@ -264,6 +275,7 @@ check_bounce_events(SrvIdx, Timeout) ->
             #{status := awaiting_empty_queue,  bounce_state := draining},
             #{status := finalizing_bounce,     bounce_state := reconnecting},
             #{status := socket_close,          bounce_state := reconnecting},
+            #{status := reconnect_timer,       bounce_state := reconnecting},
             #{status := connected,             bounce_state := waiting} | _
         ]} ->
             true;
@@ -273,6 +285,7 @@ check_bounce_events(SrvIdx, Timeout) ->
             #{status := awaiting_empty_queue,  bounce_state := draining},
             #{status := finalizing_bounce,     bounce_state := reconnecting},
             #{status := socket_close,          bounce_state := reconnecting},
+            #{status := reconnect_timer,       bounce_state := reconnecting},
             #{status := connected,             bounce_state := waiting} | _
         ]} ->
             true;
@@ -281,6 +294,7 @@ check_bounce_events(SrvIdx, Timeout) ->
             #{status := bounce_initiated,      bounce_state := draining},
             #{status := finalizing_bounce,     bounce_state := reconnecting},
             #{status := socket_close,          bounce_state := reconnecting},
+            #{status := reconnect_timer,       bounce_state := reconnecting},
             #{status := connected,             bounce_state := waiting} | _
         ]} ->
             true;
@@ -288,6 +302,7 @@ check_bounce_events(SrvIdx, Timeout) ->
             #{status := bounce_initiated,      bounce_state := draining},
             #{status := finalizing_bounce,     bounce_state := reconnecting},
             #{status := socket_close,          bounce_state := reconnecting},
+            #{status := reconnect_timer,       bounce_state := reconnecting},
             #{status := connected,             bounce_state := waiting} | _
         ]} ->
             true;

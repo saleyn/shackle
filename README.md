@@ -184,6 +184,14 @@ shackle_pool:start(pool_name(), client(), client_options(), pool_options())
         connection in a pool</td>
   </tr>
   <tr>
+    <td>bounce_udp</td>
+    <td>boolean()</td>
+    <td>false</td>
+    <td>When connection bouncing is enabled (`bounce_interval_secs` is
+        an integer) UDP connections by default are not bounced unless
+        this option is `true`</td>
+  </tr>
+  <tr>
     <td>on_bounce_event</td>
     <td>{Module::atom(), Function::atom()}</td>
     <td></td>

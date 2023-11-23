@@ -110,7 +110,7 @@ list_peers() ->
 list_peers(Limit) when is_integer(Limit) ->
     lists:sublist(list_peers(), Limit).
 
--spec peername(port() | tuple()) -> string().
+-spec peername(port() | tuple()) -> binary() | atom().
 peername(S) when is_port(S) ->
     case inet:peername(S) of
         {ok, {A, P}} ->
@@ -318,6 +318,7 @@ merge_options(AppEnv, Defaults, KeyMap) when
         {reconnect_time_min, {client, ?DEFAULT_RECONNECT_MIN}},
         {socket_options, {client, ?DEFAULT_SOCKET_OPTS}},
         {bounce_interval_secs, {client, ?DEFAULT_BOUNCE_INTERVAL}},
+        {bounce_udp, {client, ?DEFAULT_BOUNCE_UDP}},
         {on_bounce_event, {client, undefined}}
     ]),
     validate_options(PoolConfig),
@@ -350,6 +351,7 @@ validate([{reconnect_time_min, V} | T]) when is_integer(V), V >= 0 -> validate(T
 validate([{socket_options, V} | T]) when is_list(V) -> validate(T);
 validate([{bounce_interval_secs, V} | T]) when is_integer(V) -> validate(T);
 validate([{bounce_interval_secs, infinity} | T]) -> validate(T);
+validate([{bounce_udp, V} | T]) when is_boolean(V) -> validate(T);
 validate([{on_bounce_event, {M,F}} | T]) when is_atom(M), is_atom(F) -> validate(T);
 validate([{on_bounce_event, V} | T]) when is_function(V, 3) -> validate(T);
 validate([{on_bounce_event, undefined} | T]) -> validate(T);

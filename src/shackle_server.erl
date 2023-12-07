@@ -548,11 +548,19 @@ close(#state {id = Id} = State, ClientState, Reason)
 
 close_socket(#state{socket = undefined} = State) ->
     State;
-close_socket(#state{socket = Socket, protocol = Protocol, srv_idx = Idx} = State) ->
-    ?WARN(State#state.pool_name, "#~s: connection closed", [Idx]),
+close_socket(#state{socket = Socket, protocol = Protocol,
+                srv_idx = Idx, bounce_state = Reason
+            } = State) ->
+    Reason /= reconnecting andalso
+        ?WARN(State#state.pool_name, "#~s: connection closed", [Idx]),
     Res = catch Protocol:close(Socket),
     trace(State, close, Res),
-    log_metrics(State, shackle_socket_total, <<"close">>),
+    MetricsReason =
+        case Reason of
+            reconnecting -> <<"close reconnecting">>;
+            _            -> <<"close">>
+        end,
+    log_metrics(State, shackle_socket_total, MetricsReason),
     State#state{socket = undefined}.
 
 connect(#state {

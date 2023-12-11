@@ -217,7 +217,6 @@ terminate() ->
 %% private
 cleanup(Name, OptionsRec) ->
     shackle_sema:delete(Name),
-    shackle_queue:delete(Name),
     shackle_status:delete(Name),
     cleanup_ets(Name, OptionsRec),
     cleanup_foil(Name, OptionsRec).
@@ -318,7 +317,6 @@ setup(Name, #pool_options {
     %% connection can be bounced gracefully. The semaphore is used to permit
     %% only a single connection bounce in a pool at any point in time.
     persistent_term:put({bounce_sema, Name}, sema_nif:create(1)),
-    shackle_queue:new(Name),
     shackle_status:new(Name, PoolSize),
     setup_ets(Name, OptionsRec),
     setup_foil(Name, OptionsRec).

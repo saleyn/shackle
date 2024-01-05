@@ -849,7 +849,6 @@ maybe_bounce(#state{bounce_state = BS, drain_timer_ref = OldTimerRef} = State, C
         true ->
             Pool = State#state.pool_name,
             shackle_pool:finalize_bounce(Pool),
-            ?LOG_DEBUG("[~p] connection bounce finalized - reconnecting", [State#state.name]),
             ?ON_BOUNCE_EVENT(State, #{
                 status => finalizing_bounce,
                 bounce_state => reconnecting,
@@ -902,7 +901,6 @@ bounce_check(#state{
                         bounce_interval => State#state.bounce_interval,
                         src => {?MODULE, ?LINE}
                     }),
-                    ?LOG_DEBUG("[~p] connection bounce initiated", [State#state.name, State#state.id]),
                     shackle_status:disable(State#state.id),
                     maybe_bounce(State#state{bounce_state = draining}, ClientState);
                 false ->

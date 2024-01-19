@@ -622,7 +622,11 @@ connect(#state {
 handle_msg_close(S, #state {socket = S} = State, ClientState) ->
     inc_metrics(State, shackle_close_total),
     trace(State, handle_msg_close, {S, ?LINE}),
-    close(State, ClientState).
+    close(State, ClientState);
+
+handle_msg_close(_Socket, State, ClientState) ->
+    %% Ignore delayed socket close notifications for a non-owned or undefined socket
+    {ok, {State, ClientState}}.
 
 handle_msg_data(Socket, Data, #state {
         client = Client,

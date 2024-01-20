@@ -253,7 +253,7 @@ merge_options(App, DefaultOpts) when is_atom(App) ->
 %% shackle_utils:merge_options(barker, [{pool_size, 3}],
 %%     #{pool_size => barker_pool_size})     % Returns 4
 %% '''
--spec merge_options(atom()|[{atom(), any()}], [{atom(), any()}] | map(), #{atom() => atom()}) ->
+-spec merge_options(atom() | [{atom(), any()}] | map(), [{atom(), any()}] | map(), #{atom() => atom()}) ->
     {[{atom(), any()}], [{atom(), any()}]}.
 merge_options(App, DefaultOpts, KeyMap) when is_atom(App) ->
     AppEnv = application:get_all_env(App),

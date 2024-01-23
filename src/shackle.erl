@@ -20,6 +20,7 @@
     cast/2,
     cast/3,
     cast/4,
+    multi_call/3,
     receive_batch_expect_ordered_replies/1,
     receive_batch_response/1,
     receive_batch_response/2,
@@ -36,6 +37,7 @@
 -type inet_address() :: inet:ip_address() | inet:hostname().
 -type inet_port() :: inet:port_number().
 -type protocol() :: shackle_ssl| shackle_tcp | shackle_udp.
+-type request() :: term().
 -type request_id() :: {shackle_server:name(), reference()}.
 -type request_ref() :: reference().
 -type reply() :: term().
@@ -44,6 +46,8 @@
 -type socket_option() :: gen_tcp:connect_option() | gen_udp:option() | ssl:tls_client_option().
 -type socket_options() :: [socket_option()].
 -type table() :: atom().
+-type timeout_ms() :: pos_integer().
+-type timeout_x() :: infinity | timeout_ms().
 -type time() :: pos_integer().
 -type metric_type() :: counter | timing.
 -type metric_key() :: iodata().
@@ -71,8 +75,6 @@
     time/0
 ]).
 
--type request() :: term().
-
 %% public
 
 %% @doc Processes a request.
@@ -97,14 +99,14 @@ call(PoolName, Request) ->
 %% </dl>
 %%  Returns:
 %% <dl><dt></dt><dd>A reply</dd></dl>
--spec call(atom(), term(), infinity | timeout()) ->
+-spec call(atom(), term(), timeout_x()) ->
     term() | {error, atom()}.
 call(PoolName, Request, Timeout) ->
     call(PoolName, Request, Timeout, Timeout).
 
 %% @private
 %% Reserved for testing
--spec call(atom(), term(), infinity | timeout(), infinity | timeout()) ->
+-spec call(atom(), term(), timeout_x(), timeout_x()) ->
     term() | {error, atom()}.
 call(PoolName, Request, Timeout, RecvTimeout) ->
     Now = now_time(),
@@ -156,22 +158,25 @@ cast(PoolName, Request, Pid) when is_pid(Pid); Pid == undefined ->
 %% </dl>
 %%  Returns:
 %% <dl><dt></dt><dd>The request ID of the request being processed</dd></dl>
--spec cast(shackle_pool:name(), term(), undefined | pid(), infinity | timeout()) ->
+-spec cast(shackle_pool:name(), term(), undefined | pid(), timeout_x()) ->
     {ok, request_id()} | {error, atom()}.
 cast(PoolName, Request, Pid, Timeout) ->
     Now = now_time(),
     cast(PoolName, Request, Pid, Timeout, Now).
 
--spec cast(shackle_pool:name(), term(), undefined | pid(), infinity | timeout(), non_neg_integer()) ->
+-spec cast(shackle_pool:name(), term(), undefined | pid(), timeout_x(), non_neg_integer()) ->
     {ok, request_id()} | {error, atom()}.
 cast(PoolName, Request, Pid, Timeout, Timestamp) ->
     case shackle_pool:server(PoolName) of
         {ok, Client, Server, Sema} ->
             Cast = mk_cast(Client, Server, Pid, Sema, Timestamp, Timeout),
-            prometheus_counter:inc(shackle_cast_total, [Client, PoolName]),
-            Server ! {request, [Cast, Request]},
-            RequestId = Cast#cast.request_id,
-            {ok, RequestId};
+            try
+                Server ! {request, [Cast, Request]},
+                prometheus_counter:inc(shackle_cast_total, [Client, PoolName]),
+                {ok, Cast#cast.request_id}
+            catch error:badarg ->
+                {error, {bad_server, Server}}
+            end;
         {error, Reason} ->
             {error, Reason}
     end.
@@ -198,14 +203,14 @@ batch_call(PoolName, Requests) ->
 %% </dl>
 %%  Returns:
 %% <dl><dt></dt><dd>A list of replies</dd></dl>
--spec batch_call(atom(), [term()], infinity | timeout()) ->
+-spec batch_call(atom(), [term()], timeout_x()) ->
     [{ok, reply()} | {error, no_reply | timeout}] | {error, term()}.
 batch_call(PoolName, Requests, Timeout) ->
     batch_call(PoolName, Requests, Timeout, Timeout).
 
 %% @private
 %% Reserved for testing
--spec batch_call(atom(), [term()], infinity | timeout(), infinity | timeout()) ->
+-spec batch_call(atom(), [term()], timeout_x(), timeout_x()) ->
     [{ok, reply()} | {error, no_reply | timeout}] | {error, term()}.
 batch_call(_, [], _, _) ->
     [];
@@ -265,7 +270,7 @@ batch_call_expect_ordered_replies(PoolName, Requests) when is_list(Requests) ->
 %%  Returns:
 %% <dl><dt></dt><dd>A list of replies</dd></dl>
 -spec batch_call_expect_ordered_replies(
-        atom(), [request()], infinity | timeout()) ->
+        atom(), [request()], timeout_x()) ->
     [{ok, reply()} | {error, no_reply | timeout}] | {error, term()}.
 batch_call_expect_ordered_replies(PoolName, Requests, Timeout) when is_list(Requests) ->
     case batch_cast(PoolName, Requests, self(), Timeout) of
@@ -316,7 +321,7 @@ batch_cast(PoolName, Requests, Pid) ->
 %% Returns:
 %% <dl><dt></dt><dd>The state of the list of requests being processed</dd></dl>
 -spec batch_cast(
-        shackle_pool:name(), [request()], undefined | pid(), infinity | timeout()) ->
+        shackle_pool:name(), [request()], undefined | pid(), timeout_x()) ->
     {ok, batch_state()} | {error, atom()}.
 batch_cast(_, [], _, _) ->
     {ok, {undefined, 0, []}};
@@ -332,10 +337,13 @@ batch_cast(PoolName, Requests, Pid, Timeout) when is_list(Requests) ->
                 {Cast, {RequestRef, Request}}
             end || Request <- Requests],
             {Casts, RequestRefs} = lists:unzip(CastsRequestRefs),
-            prometheus_counter:inc(
-                shackle_cast_total, [Client, PoolName], Count),
-            Server ! {request, [Casts, Requests, Count]},
-            {ok, {BatchRef, Count, RequestRefs}};
+            try
+                Server ! {request, [Casts, Requests, Count]},
+                prometheus_counter:inc(shackle_cast_total, [Client, PoolName], Count),
+                {ok, {BatchRef, Count, RequestRefs}}
+            catch error:badarg ->
+                {error, {bad_server, Server}}
+            end;
         {error, Reason} ->
             {error, Reason}
     end.
@@ -513,3 +521,130 @@ now_time() ->
 
 now_time_msec() ->
     os:system_time(millisecond).
+
+%% multi-call public types and functions
+
+-type call_args() ::
+    {shackle_pool:name(), request(), proc_func()} |
+    {shackle_pool:name(), request(), proc_func(), timeout_x()}.
+
+-type acc() :: term().
+
+% callbacks called to handle result cast result ('send'), or server response ('recv')
+-type side() :: send | recv.
+-type proc_func() :: fun(
+    (side(), reply(), acc()) ->
+        {continue, acc()} |
+        {chain, call_args() | [call_args()], acc()} |
+        {stop, acc()}
+).
+
+-spec multi_call([call_args()], timeout_ms(), acc()) -> acc().
+multi_call(Calls, Timeout, Acc) ->
+    Expiration = expiration(Timeout),
+    case multi_cast(Calls, Expiration, Acc) of
+        {continue, Acc_, State} ->
+            multi_wait(Expiration, Acc_, State);
+        {stop, Acc_} ->
+            Acc_
+    end.
+
+%% private multi-call stuff
+
+-type state() :: #{request_id() => proc_func()}.
+-type call_ret() :: {continue, acc(), state()} | {stop, acc()}.
+-type expiration() :: {at, pos_integer()}.
+
+-spec multi_cast([call_args()], expiration(), acc()) -> call_ret().
+multi_cast(Args, Expiration, Acc) ->
+    multi_cast(Args, Expiration, Acc, #{}).
+
+multi_cast([Arg | Args], Expiration, Acc, State) ->
+    case place_call(Arg, Expiration, Acc, State) of
+        {continue, Acc_, State_} ->
+            multi_cast(Args, Expiration, Acc_, State_);
+        {stop, Acc_} ->
+            {stop, Acc_}
+    end;
+multi_cast([], _Expiration, Acc, State) ->
+    {continue, Acc, State}.
+
+multi_wait(_Expiration, Acc, State) when map_size(State) == 0 ->
+    Acc;
+multi_wait(Expiration, Acc, State) ->
+    receive
+        {#cast{request_id = Id}, Reply} ->
+            case maps:find(Id, State) of
+                {ok, ProcFun} ->
+                    case safe_apply(recv, ProcFun, Reply, Expiration, Acc, State) of
+                        {continue, Acc_, State_} ->
+                            multi_wait(Expiration, Acc_, State_);
+                        {stop, Acc_} ->
+                            Acc_
+                    end;
+                error ->
+                    multi_wait(Expiration, Acc, State)
+            end
+    after timeout(Expiration) ->
+        Acc
+    end.
+
+safe_apply(Side, ProcFun, Data, Expiration, Acc, State) ->
+    try ProcFun(Side, Data, Acc) of
+        {continue, Acc_} ->
+            {continue, Acc_, State};
+        {chain, Requests, Acc_} ->
+            place_call(Requests, Expiration, Acc_, State);
+        {stop, Acc_} ->
+            {stop, Acc_};
+        Other ->
+            ?LOG_ERROR("Unexpected callback return: ~p", [Other]),
+            {continue, Acc, State}
+    catch
+        ?EXCEPTION(C, E, S) ->
+            ?LOG_ERROR("Unexpected callback ~p: ~p from ~p", [C, E, ?GET_STACK(S)]),
+            {continue, Acc, State}
+    end.
+
+place_call({PoolName, Request, ProcFun}, Expiration, Acc, State) when
+    is_atom(PoolName), is_function(ProcFun, 3)
+->
+    place_call({PoolName, Request, ProcFun, infinity}, Expiration, Acc, State);
+place_call({PoolName, Request, ProcFun, Timeout}, Expiration, Acc, State) when
+    is_atom(PoolName),
+    is_function(ProcFun, 3),
+    Timeout =:= infinity orelse is_integer(Timeout) andalso Timeout > 0
+->
+    case cast(PoolName, Request, self(), timeout(Timeout, Expiration), now_time()) of
+        {ok, Id} ->
+            safe_apply(send, ProcFun, ok, Expiration, Acc, State#{Id => ProcFun});
+        {error, Error} ->
+            safe_apply(send, ProcFun, {error, Error}, Expiration, Acc, State)
+    end;
+place_call([Call | Calls], Expiration, Acc, State) ->
+    case place_call(Call, Expiration, Acc, State) of
+        {continue, Acc_, State_} ->
+            place_call(Calls, Expiration, Acc_, State_);
+        {stop, Acc_} ->
+            {stop, Acc_}
+    end;
+place_call([], _Expiration, Acc, State) ->
+    {continue, Acc, State};
+place_call(Args, _Expiration, _Acc, _State) ->
+    throw({error, {invalid_args, Args}}).
+
+timeout(infinity, Expiration) -> timeout(Expiration);
+timeout(TimeoutMs, _) -> TimeoutMs.
+
+-spec expiration(timeout_ms()) -> expiration().
+expiration(TimeoutMs) ->
+    {at, erlang:monotonic_time(millisecond) + TimeoutMs}.
+
+-spec timeout(expiration()) -> timeout_ms().
+timeout({at, StoptimeMs}) ->
+    case StoptimeMs - erlang:monotonic_time(millisecond) of
+        TimeoutMs when TimeoutMs > 0 ->
+            TimeoutMs;
+        _ ->
+            0
+    end.

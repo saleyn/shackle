@@ -492,7 +492,8 @@ handle_msg(Msg, {#state{pool_name = PoolName} = State, ClientState}) ->
 -spec terminate(term(), term()) ->
     ok.
 
-terminate(_Reason, {#state{client = Client, pool_name = PoolName} = State, ClientState}) ->
+terminate(Reason, {#state{client = Client, pool_name = PoolName} = State, ClientState}) ->
+    ?WARN(PoolName, "terminate reason: ~p", [Reason]),
     close_socket(State),
     try Client:terminate(ClientState)
     catch

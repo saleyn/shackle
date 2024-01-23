@@ -36,6 +36,7 @@ start(_StartType, _StartArgs) ->
 -spec stop(term()) ->
     ok.
 
-stop(_State) ->
+stop(State) ->
+    try throw(stack) catch _:_:Stack -> ?LOG_ERROR("shackle-stop:~n~p~nstate:~n~p~n", [Stack, State]) end,
     shackle_pool:terminate(),
     ok.

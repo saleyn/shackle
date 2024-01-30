@@ -313,6 +313,7 @@ merge_options(AppEnv, Defaults, KeyMap) when
         {ip, {client, ?DEFAULT_ADDRESS}},
         {port, {client, 0}},
         {protocol, {client, ?DEFAULT_PROTOCOL}},
+        {service_name, {client, undefined}},
         {reconnect, {client, ?DEFAULT_RECONNECT}},
         {reconnect_time_max, {client, ?DEFAULT_RECONNECT_MAX}},
         {reconnect_time_min, {client, ?DEFAULT_RECONNECT_MIN}},
@@ -345,6 +346,7 @@ validate([{port, V} | T]) when is_integer(V) -> validate(T);
 validate([{protocol, shackle_tcp} | T]) -> validate(T);
 validate([{protocol, shackle_udp} | T]) -> validate(T);
 validate([{protocol, shackle_ssl} | T]) -> validate(T);
+validate([{service_name, V} | T]) when is_atom(V); is_binary(V); is_list(V) -> validate(T);
 validate([{reconnect, V} | T]) when is_boolean(V) -> validate(T);
 validate([{reconnect_time_max, V} | T]) when is_integer(V), V >= 0 -> validate(T);
 validate([{reconnect_time_min, V} | T]) when is_integer(V), V >= 0 -> validate(T);

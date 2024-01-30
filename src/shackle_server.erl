@@ -2,6 +2,8 @@
 %%
 %% Configuration options:
 %% <du>
+%% <dt>service_name</dt>
+%%  <dd>Name of the endpoint service (defaults to the client module name)</dd>
 %% <dt>init_options</dt>
 %%  <dd>Options passed to the client in the `init/3' callback.</dd>
 %% <dt>address</dt><dd>IP address of the server's endpoint to connect to.</dd>
@@ -68,6 +70,7 @@
     srv_idx          :: binary(),
     init_options     :: init_options(),
     name             :: name(),
+    service_name     :: binary(),
     parent           :: pid(),
     pool_name        :: shackle_pool:name(),
     port             :: shackle:inet_port(),
@@ -236,6 +239,7 @@ init(Name, Parent, Opts) ->
     Port = ?LOOKUP(port, ServerOpts1),
     Protocol = ?LOOKUP(protocol, ServerOpts1, ?DEFAULT_PROTOCOL),
     SocketOptions = ?LOOKUP(socket_options, ServerOpts1, ?DEFAULT_SOCKET_OPTS),
+    ServiceName = to_bin(?LOOKUP(service_name, ServerOpts1, Client)),
     ReconnectState = reconnect_state(ServerOpts1),
     TraceLog = init_trace_log(),
     BounceUDP = ?LOOKUP(bounce_udp, ServerOpts1, ?DEFAULT_BOUNCE_UDP),
@@ -277,6 +281,7 @@ init(Name, Parent, Opts) ->
         srv_idx = SrvIdxBin,
         init_options = InitOptions,
         name = Name,
+        service_name = ServiceName,
         parent = Parent,
         pool_name = PoolName,
         port = Port,
@@ -939,20 +944,24 @@ bounce_check(State, ClientState, _) ->
 
 inc_metrics(State, Metric) ->
     inc_metrics(State, Metric, 1).
-inc_metrics(#state{srv_idx = SrvIdx, client = Cli, pool_name = Pool}, Metric, Inc) when is_integer(Inc) ->
-    log_metrics2(Metric, [Cli, Pool, SrvIdx], Inc);
-inc_metrics(#state{srv_idx = SrvIdx, client = Cli, pool_name = Pool}, Metric, Reason) when is_binary(Reason) ->
-    log_metrics2(Metric, [Cli, Pool, SrvIdx, Reason], 1).
+inc_metrics(#state{srv_idx = SrvIdx, service_name = SName, pool_name = Pool}, Metric, Inc) when is_integer(Inc) ->
+    log_metrics2(Metric, [SName, Pool, SrvIdx], Inc);
+inc_metrics(#state{srv_idx = SrvIdx, service_name = SName, pool_name = Pool}, Metric, Reason) when is_binary(Reason) ->
+    log_metrics2(Metric, [SName, Pool, SrvIdx, Reason], 1).
 
 log_metrics2(Metric, Args, N) ->
     prometheus_counter:inc(Metric, Args, N).
 
-observe_metrics(#state{client = Client, pool_name = PoolName}, #cast{timestamp = Timestamp}, Metric) ->
+observe_metrics(#state{service_name = SName, pool_name = PoolName}, #cast{timestamp = Timestamp}, Metric) ->
     TimeDiff = os:system_time(microsecond) - Timestamp,
-    prometheus_histogram:observe(Metric, [Client, PoolName], TimeDiff).
+    prometheus_histogram:observe(Metric, [SName, PoolName], TimeDiff).
 
 now_time_ms() ->
     os:system_time(millisecond).
+
+to_bin(V) when is_atom(V) -> atom_to_binary(V);
+to_bin(V) when is_list(V) -> list_to_binary(V);
+to_bin(V) when is_binary(V) -> V.
 
 -ifdef(WITH_SHACKLE_TRACE_LOG).
 init_trace_log() ->

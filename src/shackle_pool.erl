@@ -250,7 +250,6 @@ options_rec(Client, Options) ->
     MaxRetries = ?LOOKUP(max_retries, Options1, ?DEFAULT_MAX_RETRIES),
     PoolSize = ?LOOKUP(pool_size, Options1, ?DEFAULT_POOL_SIZE),
     PoolStrategy = ?LOOKUP(pool_strategy, Options1, ?DEFAULT_POOL_STRATEGY),
-
     #pool_options {
         backlog_size = BacklogSize,
         client = Client,

@@ -134,6 +134,7 @@ start(PoolOptions) ->
     ok | {error, shackle_not_started | pool_already_started}.
 start(PoolOptions, ClientOptions) ->
     shackle_pool:start(?POOL_NAME_TCP, ?CLIENT_TCP, ClientOptions ++ [
+        {service_name, "arithmetic"},
         {port, ?PORT},
         {reconnect, true},
         {reconnect_time_min, 1},

@@ -311,8 +311,8 @@ handle_msg({request, [Casts | _]}, {#state{bounce_state = BS} = S, CliState}) wh
 
 handle_msg({request, [#cast {timeout = _Timeout} = Cast, Request]},
         {#state{bounce_state = waiting, client = Client} = State, ClientState}) ->
-    try Client:handle_request(Request, ClientState) of
-        {ok, ExtRequestId, Data, ClientState2} ->
+    try client_handle_request(Client, Cast, Request, ClientState) of
+        {ok, Cast2, ExtRequestId, Data, ClientState2} ->
             Protocol = State#state.protocol,
             Socket = State#state.socket,
             case Protocol:send(Socket, Data) of
@@ -320,9 +320,9 @@ handle_msg({request, [#cast {timeout = _Timeout} = Cast, Request]},
                     inc_metrics(State, shackle_request_total),
                     case ExtRequestId of
                         undefined ->
-                            reply(ok, [Cast], State, ClientState2);
+                            reply(ok, [Cast2], State, ClientState2);
                         _ ->
-                            State2 = set_receive_timeout(State, ExtRequestId, Cast),
+                            State2 = set_receive_timeout(State, ExtRequestId, Cast2),
                             {ok, {State2, ClientState2}}
                     end;
                 {error, Reason} ->
@@ -331,7 +331,7 @@ handle_msg({request, [#cast {timeout = _Timeout} = Cast, Request]},
                     inc_metrics(State, shackle_error_total, <<"send error">>),
                     ?WARN(PoolName, "SrvIdx=~s send error: ~p", [State#state.srv_idx, Reason]),
                     {ok, {State3, ClientState3}} =
-                        reply({error, socket_closed}, [Cast], State, ClientState2),
+                        reply({error, socket_closed}, [Cast2], State, ClientState2),
                     close(State3, ClientState3)
             end
     catch
@@ -346,21 +346,21 @@ handle_msg({request, [#cast {timeout = _Timeout} = Cast, Request]},
 
 handle_msg({request, [Casts, Requests, Count]}, {#state {client = Client} = State, ClientState})
     when is_integer(Count), Count >= 0 ->
-    try Client:handle_request(Requests, ClientState) of
-        {ok, ExtRequestIds, Data, ClientState2} ->
+    try client_handle_requests(Client, Casts, Requests, ClientState) of
+        {ok, Casts2, ExtRequestIds, Data, ClientState2} ->
             Protocol = State#state.protocol,
             Socket = State#state.socket,
             case Protocol:send(Socket, Data) of
                 ok ->
                     inc_metrics(State, shackle_request_total, Count),
-                    State2 = handle_request_ids_from_client(ExtRequestIds, Casts, State, ClientState),
+                    State2 = handle_request_ids_from_client(ExtRequestIds, Casts2, State, ClientState),
                     {ok, {State2, ClientState2}};
                 {error, Reason} ->
                     inc_metrics(State, shackle_error_total, <<"send error">>),
                     ?WARN(State#state.pool_name, "SrvIdx=~s send error: ~p",
                         [State#state.srv_idx, Reason]),
                     {ok, {State3, ClientState3}} =
-                        reply({error, socket_closed}, Casts, State, ClientState2),
+                        reply({error, socket_closed}, Casts2, State, ClientState2),
                     close(State3, ClientState3)
             end
     catch
@@ -535,7 +535,7 @@ client(Client, PoolName, InitOptions, Protocol, Socket) ->
     end.
 
 client_init(Client, PoolName, InitOptions) ->
-    try Client:init(InitOptions) of
+    try client_init_(Client, PoolName, InitOptions) of
         {ok, ClientState} ->
             {ok, ClientState};
         {error, Reason} ->
@@ -548,9 +548,22 @@ client_init(Client, PoolName, InitOptions) ->
             {error, client_crash}
     end.
 
+client_init_(Client, PoolName, InitOptions) ->
+    case erlang:function_exported(Client, init, 2) of
+        true ->
+            Client:init(InitOptions, #{pool => PoolName});
+        false ->
+            case erlang:function_exported(Client, init, 1) of
+                true ->
+                    Client:init(InitOptions);
+                false ->
+                    {ok, undefined}
+            end
+    end.
+
 client_setup(Client, PoolName, Protocol, Socket, ClientState) ->
     Protocol:setopts(Socket, [{active, false}]),
-    try Client:setup(Socket, ClientState) of
+    try client_setup_(Client, Socket, ClientState) of
         {ok, ClientState2} ->
             Protocol:setopts(Socket, [{active, true}]),
             {ok, ClientState2};
@@ -562,6 +575,37 @@ client_setup(Client, PoolName, Protocol, Socket, ClientState) ->
             ?WARN(PoolName, "setup error: ~p:~p~n  ~p~n",
                 [E, R, ?GET_STACK(Stacktrace)]),
             {error, client_crash, ClientState}
+    end.
+
+client_setup_(Client, Socket, ClientState) ->
+    case erlang:function_exported(Client, setup, 2) of
+        true ->
+            Client:setup(Socket, ClientState);
+        false ->
+            {ok, ClientState}
+    end.
+
+client_handle_request(Client, Cast, Request, ClientState) ->
+    case Client:handle_request(Request, ClientState) of
+        {ok, ExtRequestId, Data, ClientState_} ->
+            {ok, Cast, ExtRequestId, Data, ClientState_};
+        {ok, ExtRequestId, Data, RequestState, ClientState_} ->
+            Cast_ = Cast#cast{request_state = RequestState},
+            {ok, Cast_, ExtRequestId, Data, ClientState_};
+        Else ->
+            Else
+    end.
+
+client_handle_requests(Client, Casts, Requests, ClientState) ->
+    case Client:handle_request(Requests, ClientState) of
+        {ok, ExtRequestIds, Data, ClientState_} ->
+            {ok, Casts, ExtRequestIds, Data, ClientState_};
+        {ok, ExtRequestIds, Data, RequestStates, ClientState_} ->
+            Casts_ = [Cast#cast{request_state = RequestState} ||
+                {Cast, RequestState} <- lists:zip(Casts, RequestStates)],
+            {ok, Casts_, ExtRequestIds, Data, ClientState_};
+        Else ->
+            Else
     end.
 
 close(State, ClientState) ->

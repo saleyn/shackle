@@ -1,8 +1,12 @@
 -module(shackle_client).
 
--optional_callbacks([handle_timeout/2]).
+-optional_callbacks([init/1, init/2, setup/2, handle_timeout/2]).
 
 -callback init(Options :: term()) ->
+    {ok, State :: term()} |
+    {error, Reason :: term()}.
+
+-callback init(Options :: term(), Context :: map()) ->
     {ok, State :: term()} |
     {error, Reason :: term()}.
 
@@ -13,7 +17,10 @@
 -callback handle_request(Request :: term(), State :: term()) ->
     {ok, RequestId :: shackle:external_request_id() |
         [RequestIds :: shackle:external_request_id()],
-        Data :: iodata(), State :: term()}.
+        Data :: iodata(), State :: term()} |
+    {ok, RequestId :: shackle:external_request_id() |
+        [RequestIds :: shackle:external_request_id()],
+        Data :: iodata(), RequestState :: term(), State :: term()}.
 
 -callback handle_data(Data :: binary(), State :: term()) ->
     {ok, [Response :: shackle:response()], State :: term()} |

@@ -135,6 +135,9 @@ queue_take(Key, #state{queue = Queue} = State) ->
             error
     end.
 
+queue_remove(Key, #state{queue = Queue} = State) ->
+    State#state{queue = maps:remove(Key, Queue)}.
+
 queue_update(Key, Value, #state{queue = Queue} = State) ->
     State#state{queue = maps:update(Key, Value, Queue)}.
 
@@ -726,7 +729,8 @@ handle_progress(ExtRequestId, Data, ProcFun, State, ClientState) ->
             case ProcFun(Data, RequestState, ClientState) of
                 {ok, Reply, ClientState_} ->
                     cancel_timer(Cast),
-                    reply(Reply, [Cast], State, ClientState_);
+                    State_ = queue_remove(ExtRequestId, State),
+                    reply(Reply, [Cast], State_, ClientState_);
                 {continue, RequestState_, ClientState_} ->
                     Cast_ = Cast#cast{request_state = RequestState_},
                     State_ = queue_update(ExtRequestId, Cast_, State),

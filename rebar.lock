@@ -1,7 +1,7 @@
 {"1.2.0",
 [{<<"erlsem">>,
   {git,"https://github.com/x0id/erlsem.git",
-       {ref,"118506906cb41e9100392da4711bc9303451ec88"}},
+       {ref,"44129dae30af084e3b4dad9a0aaea1fd92cdb35b"}},
   0},
  {<<"foil">>,
   {git,"https://github.com/lpgauth/foil.git",

@@ -290,7 +290,7 @@ merge_options(AppEnv, Defaults, KeyMap) when
         % Translate the key if a key map is provided
         K = maps:get(I, KeyMap, I),
         case maps:get(K, Env, undefined) of
-            V when V == undefined; V =:= D ->
+            V when V == undefined ->
                 Opts = maps:get(Type, AppEnvOpts),
                 Def = maps:get(I, DefaultOpts, D),
                 case maps:get(I, Opts, Def) of
@@ -364,20 +364,42 @@ validate([KV | _]) -> erlang:error({invalid_shackle_option, KV}).
 %%%----------------------------------------------------------------------------
 -ifdef(EUNIT).
 
+-define(A_PORT, 55447).
+-define(AN_ADDRESS,
+    "pacing-answerer-use1-dsp-prod-us-east-1b.pacing-answerer-prod.svc.cluster.local"
+).
+-define(SOME_DEFAULT_OPTIONS, #{
+    pool_size => 1,
+    port => 55447,
+    max_retries => 3,
+    backlog_size => 128,
+    reconnect_time_min => timer:seconds(1),
+    pool_strategy => round_robin,
+    socket_options => ?SOME_DEFAULT_SOCKET_OPTIONS
+}).
+-define(SOME_DEFAULT_SOCKET_OPTIONS, [
+    binary,
+    {buffer, 65535},
+    {nodelay, true},
+    {packet, raw},
+    {send_timeout, 50},
+    {send_timeout_close, true}
+]).
+-define(AN_APPLICATION, pacingderl).
+
 shackle_settings_hierarchy_test_() ->
     {setup,
         fun() ->
-            application:set_env(shackle, pool, [{pool_size, 100}]),
-            application:set_env(abcdef, pool_size, 80),
-            application:set_env(abcdef, temp_pool_size, 70),
-            application:set_env(abcdef, shackle, [{pool, [{pool_size, 90}]}])
+            with_env([
+                {shackle, [{pool, [{pool_size, 100}]}]},
+                {abcdef, [
+                    {pool_size, 80},
+                    {temp_pool_size, 70},
+                    {shackle, [{pool, [{pool_size, 90}]}]}
+                ]}
+            ])
         end,
-        fun(_) ->
-            application:unset_env(abcdef, shackle),
-            application:unset_env(abcdef, pool_size),
-            application:unset_env(abcdef, temp_pool_size),
-            application:unset_env(shackle, pool)
-        end,
+        fun cleanup/1,
         [
             % If there is an option name translation, use `temp_pool_size'
             ?_assertEqual(
@@ -424,14 +446,12 @@ shackle_settings_hierarchy_test_() ->
 shackle_settings_test_() ->
     {setup,
         fun() ->
-            application:set_env(shackle, client, [{bounce_interval_secs, 100}]),
-            application:set_env(abcdef, bounce_interval_secs, 10)
+            with_env([
+                {shackle, [{client, [{bounce_interval_secs, 100}]}]},
+                {abcdef, [{bounce_interval_secs, 10}]}
+            ])
         end,
-        fun(_) ->
-            application:unset_env(abcdef, bounce_interval_secs),
-            application:unset_env(abcdef, port),
-            application:unset_env(shackle, client)
-        end,
+        fun cleanup/1,
         [
             ?_assertEqual(10, check(shackle_utils:merge_options(abcdef, [{bounce_interval_secs, 300}]))),
             % Provided option is the same as shackle default value for this option,
@@ -451,11 +471,9 @@ shackle_mapped_settings_test_() ->
     KeyMap = #{port => temp_port, bounce_interval_secs => temp_interval_secs},
     {setup,
         fun() ->
-            application:set_env(shackle, client, [{port, 10}, {bounce_interval_secs, 100}])
+            with_env([{shackle, [{client, [{port, 10}, {bounce_interval_secs, 100}]}]}])
         end,
-        fun(_) ->
-            application:unset_env(shackle, client)
-        end,
+        fun cleanup/1,
         [
             ?_assertEqual(30, check(merge_options(AppEnv, [{bounce_interval_secs, 300}], KeyMap))),
             ?_assertEqual(1234, check(port, merge_options(AppEnv, [{port, 1000}], KeyMap))),
@@ -469,17 +487,70 @@ shackle_mapped_settings_test_() ->
 
 shackle_validation_test_() ->
     {setup,
-        fun() ->
-            application:set_env(shackle, client, [{port, a}])
-        end,
-        fun(_) ->
-            application:unset_env(shackle, client)
-        end,
+        fun() -> with_env([{shackle, [{client, [{port, a}]}]}]) end,
+        fun cleanup/1,
         [
             ?_assertError({invalid_shackle_option, {port, a}}, merge_options([], [], #{})),
             ?_assertError({invalid_shackle_option, {max_restarts, 5}}, merge_options([], [{max_restarts, 5}], #{}))
         ]
     }.
+
+ensure_top_value_is_used_even_if_equal_to_default_test_() ->
+    {setup,
+        fun() ->
+            with_env([
+                {?AN_APPLICATION, [
+                    {backlog_size, ?DEFAULT_BACKLOG_SIZE},
+                    {max_retries, ?DEFAULT_MAX_RETRIES},
+                    {pool_size, ?DEFAULT_POOL_SIZE},
+                    {pool_strategy, ?DEFAULT_POOL_STRATEGY},
+                    {reconnect_time_min, 500},
+                    {port, ?A_PORT},
+                    {ip, ?AN_ADDRESS}
+                ]}
+            ])
+        end,
+        fun cleanup/1, [
+            ?_assertEqual(
+                {
+                    [
+                        {socket_options, ?SOME_DEFAULT_SOCKET_OPTIONS},
+                        {reconnect_time_min, ?DEFAULT_RECONNECT_MIN},
+                        {port, ?A_PORT},
+                        {ip, ?AN_ADDRESS}
+                    ],
+                    [
+                        {pool_strategy, ?DEFAULT_POOL_STRATEGY},
+                        {pool_size, ?DEFAULT_POOL_SIZE},
+                        {max_retries, ?DEFAULT_MAX_RETRIES},
+                        {backlog_size, ?DEFAULT_BACKLOG_SIZE}
+                    ]
+                },
+                shackle_utils:merge_options(?AN_APPLICATION, ?SOME_DEFAULT_OPTIONS)
+            )
+        ]}.
+
+with_env(Values) ->
+    lists:flatmap(
+        fun({App, Keys}) ->
+            lists:map(fun ({Key, New}) -> with_env(App, Key, New) end, Keys)
+        end,
+        Values
+    ).
+
+with_env(App, Key, New) ->
+    Cleanup =
+        case application:get_env(App, Key) of
+            undefined ->
+                fun() -> application:unset_env(App, Key) end;
+            {ok, Old} ->
+                fun() -> application:set_env(App, Key, Old) end
+        end,
+    application:set_env(App, Key, New),
+    Cleanup.
+
+cleanup(Cleanup) ->
+    lists:foreach(fun(C) -> C() end, Cleanup).
 
 check({L, _}) ->
     proplists:get_value(bounce_interval_secs, L, undefined).

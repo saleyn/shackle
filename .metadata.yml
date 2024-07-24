@@ -2,6 +2,8 @@ metadata:
   name: erlang-shackle
   description: "High-Performance Erlang Network Client Framework."
   labels:
+    sensitive: false
+    public: false
     jira-project: DEGA
     jira-board: 189
   links:
@@ -10,4 +12,4 @@ metadata:
 spec:
   owner: cg-dsp-bidding-systems
   type: library
-  lifecycle:  production
+  lifecycle: production

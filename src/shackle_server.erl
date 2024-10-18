@@ -992,10 +992,10 @@ bounce_check(State, ClientState, _) ->
 
 inc_metrics(State, Metric) ->
     inc_metrics(State, Metric, 1).
-inc_metrics(#state{srv_idx = SrvIdx, service_name = SName, pool_name = Pool}, Metric, Inc) when is_integer(Inc) ->
-    log_metrics2(Metric, [SName, Pool, SrvIdx], Inc);
-inc_metrics(#state{srv_idx = SrvIdx, service_name = SName, pool_name = Pool}, Metric, Reason) when is_binary(Reason) ->
-    log_metrics2(Metric, [SName, Pool, SrvIdx, Reason], 1).
+inc_metrics(#state{service_name = SName, pool_name = Pool}, Metric, Inc) when is_integer(Inc) ->
+    log_metrics2(Metric, [SName, Pool], Inc);
+inc_metrics(#state{service_name = SName, pool_name = Pool}, Metric, Reason) when is_binary(Reason) ->
+    log_metrics2(Metric, [SName, Pool, Reason], 1).
 
 log_metrics2(Metric, Args, N) ->
     prometheus_counter:inc(Metric, Args, N).

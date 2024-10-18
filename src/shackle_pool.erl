@@ -260,7 +260,7 @@ options_rec(Client, Options) ->
 
 server(Name, _Count, #pool_options{ client = Client }, 0) ->
     prometheus_counter:inc(shackle_error_total, [
-        Client, Name, <<"undefined">>, <<"no server">>
+        Client, Name, <<"no server">>
     ]),
     {error, no_server};
 server(
@@ -286,14 +286,13 @@ server(
                     {ok, Client, ServerName, Sema};
                 error ->
                     prometheus_counter:inc(shackle_attempt_total, [
-                        Client, Name, integer_to_binary(ServerIdx),
-                        <<"backlog full">>
+                        Client, Name, <<"backlog full">>
                     ]),
                     server(Name, Count, Options, N - 1)
             end;
         false ->
             prometheus_counter:inc(shackle_attempt_total, [
-                Client, Name, integer_to_binary(ServerIdx), <<"disabled">>
+                Client, Name, <<"disabled">>
             ]),
             server(Name, Count, Options, N - 1)
     end.

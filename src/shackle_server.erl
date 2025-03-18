@@ -232,6 +232,7 @@ set_bounce_event(SrvName, Fun) when is_function(Fun, 3); Fun == undefined ->
 
 init(Name, Parent, Opts) ->
     {PoolName, Index, Client, ServerOpts} = Opts,
+    ensure_loaded(Client),
     ServerOpts1 = shackle_utils:default_options(client, ServerOpts),
 
     self() ! ?MSG_CONNECT,
@@ -262,13 +263,7 @@ init(Name, Parent, Opts) ->
             Fun when is_function(Fun, 3) ->
                 Fun;
             {M, F} when is_atom(M), is_atom(F) ->
-                case code:is_loaded(M) of
-                    false ->
-                        {module, M} == code:load_file(M)
-                            orelse error({cannot_load_module, M});
-                    _ ->
-                        ok
-                end,
+                ensure_loaded(M),
                 erlang:function_exported(M, F, 3)
                     orelse error({function_not_exported, {M, F, 3}}),
                 fun(Event) -> M:F(PoolName, Index, Event) end
@@ -514,6 +509,15 @@ terminate(Reason, {#state{client = Client, pool_name = PoolName} = State, Client
     ok.
 
 %% private
+ensure_loaded(M) ->
+    case code:is_loaded(M) of
+        false ->
+            {module, M} == code:load_file(M)
+                orelse error({cannot_load_module, M});
+        _ ->
+            ok
+    end.
+
 address(ClientOptions) ->
     case ?LOOKUP(address, ClientOptions) of
         undefined ->

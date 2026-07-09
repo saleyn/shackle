@@ -25,7 +25,11 @@
     receive_batch_response/1,
     receive_batch_response/2,
     receive_response/1,
-    receive_response/2
+    receive_response/2,
+    set_probe_callback/2,
+    set_socket_rtt_callback/2,
+    start_probe/3,
+    stop_probe/1
 ]).
 
 %% types
@@ -416,6 +420,39 @@ receive_response(RequestId, Timeout) ->
         %% have no choice but to throw an exception here to make it
         %% distinguishable from the normal reply.
         erlang:error(timeout)
+    end.
+
+%% @doc Register a socket RTT callback for a specific shackle client.
+%%
+%% The callback `Fun(PoolName, RttUs)' is invoked on each TCP data receive
+%% with the kernel-reported socket RTT in microseconds (Linux TCP_INFO).
+%% Silently no-ops on non-Linux or non-TCP sockets.
+-spec set_socket_rtt_callback(client(), fun((shackle_pool:name(), non_neg_integer()) -> any())) -> ok.
+set_socket_rtt_callback(Client, Fun) when is_atom(Client), is_function(Fun, 2) ->
+    persistent_term:put({shackle_socket_rtt_callback, Client}, Fun),
+    ok.
+
+-spec set_probe_callback(client(), fun((shackle_pool:name(), integer()) -> any())) -> ok.
+set_probe_callback(Client, Fun) when is_atom(Client), is_function(Fun, 2) ->
+    persistent_term:put({shackle_probe_callback, Client}, Fun),
+    ok.
+
+-spec start_probe(shackle_pool:name(), client(), map()) -> {ok, pid()} | {error, term()}.
+start_probe(PoolName, Client, Opts) ->
+    ChildSpec = #{
+        id => {shackle_probe, PoolName},
+        start => {shackle_probe, start_link, [PoolName, Client, Opts]},
+        restart => permanent,
+        type => worker
+    },
+    supervisor:start_child(?SUPERVISOR, ChildSpec).
+
+-spec stop_probe(shackle_pool:name()) -> ok | {error, term()}.
+stop_probe(PoolName) ->
+    Id = {shackle_probe, PoolName},
+    case supervisor:terminate_child(?SUPERVISOR, Id) of
+        ok -> supervisor:delete_child(?SUPERVISOR, Id);
+        Err -> Err
     end.
 
 %% private

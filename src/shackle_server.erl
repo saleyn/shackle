@@ -376,6 +376,7 @@ handle_msg({ssl_closed, Socket}, {State, ClientState}) ->
 handle_msg({ssl_error, Socket, Reason}, {State, ClientState}) ->
     handle_msg_error(Socket, Reason, State, ClientState);
 handle_msg({tcp, Socket, Data}, {State, ClientState}) ->
+    report_socket_rtt(State),
     handle_msg_data(Socket, Data, State, ClientState);
 handle_msg({tcp_closed, Socket}, {State, ClientState}) ->
     handle_msg_close(Socket, State, ClientState);
@@ -488,6 +489,16 @@ handle_msg({next_bounce, Pid, Ref}, {#state{bounce_interval = infinity}, _} = Tu
 handle_msg({next_bounce, Pid, Ref}, {#state{next_bounce = Time}, _} = TupState) ->
     Pid ! {Ref, Time - now_time_ms()},
     {ok, TupState};
+handle_msg({probe, SentAt, _Bytes}, {#state{client = Client, pool_name = PoolName} = State, ClientState}) ->
+    RecvAt = erlang:monotonic_time(),
+    case persistent_term:get({shackle_probe_callback, Client}, undefined) of
+        Fun when is_function(Fun, 2) ->
+            DelayUs = erlang:convert_time_unit(RecvAt - SentAt, native, microsecond),
+            Fun(PoolName, DelayUs);
+        _ ->
+            ok
+    end,
+    {ok, {State, ClientState}};
 handle_msg(Msg, {#state{pool_name = PoolName} = State, ClientState}) ->
     ?WARN(PoolName, "unknown msg: ~p", [Msg]),
     {ok, {State, ClientState}}.
@@ -1007,6 +1018,31 @@ log_metrics2(Metric, Args, N) ->
 observe_metrics(#state{service_name = SName, pool_name = PoolName}, #cast{timestamp = Timestamp}, Metric) ->
     TimeDiff = os:system_time(microsecond) - Timestamp,
     prometheus_histogram:observe(Metric, [SName, PoolName], TimeDiff).
+
+report_socket_rtt(#state{client = Client, pool_name = PoolName, socket = Socket}) ->
+    case persistent_term:get({shackle_socket_rtt_callback, Client}, undefined) of
+        Fun when is_function(Fun, 2) ->
+            case get_socket_rtt(Socket) of
+                {ok, RttUs} -> Fun(PoolName, RttUs);
+                _ -> ok
+            end;
+        _ ->
+            ok
+    end.
+
+-define(IPPROTO_TCP, 6).
+-define(TCP_INFO, 11).
+-define(TCP_INFO_SIZE, 256).
+-define(RTT_OFFSET, 88).
+
+get_socket_rtt(Socket) ->
+    case inet:getopts(Socket, [{raw, ?IPPROTO_TCP, ?TCP_INFO, ?TCP_INFO_SIZE}]) of
+        {ok, [{raw, ?IPPROTO_TCP, ?TCP_INFO, Bin}]} when byte_size(Bin) >= ?RTT_OFFSET + 4 ->
+            <<_:?RTT_OFFSET/binary, RttUs:32/native-unsigned, _/binary>> = Bin,
+            {ok, RttUs};
+        _ ->
+            error
+    end.
 
 now_time_ms() ->
     os:system_time(millisecond).

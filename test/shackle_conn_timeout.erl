@@ -72,7 +72,7 @@ conn_timeout2_test_() ->
                 {bounce_interval_secs, ?BOUNCE_INTERVAL_SEC},
                 {on_bounce_event, fun(N, I, E) ->
                     append_event(I, E),
-                    catch (whereis(?MODULE) ! {event, {N, I, E}})
+                    try whereis(?MODULE) ! {event, {N, I, E}} catch _:_ -> ok end
                 end}
             ])
         end,
@@ -129,7 +129,7 @@ two_conns_timeout_test_() ->
                 {reconnect_time_max, 0},
                 {bounce_interval_secs, 1},
                 {on_bounce_event, fun(_N, I, E) ->
-                    catch (whereis(?MODULE) ! {event, {I, E}})
+                    try whereis(?MODULE) ! {event, {I, E}} catch _:_ -> ok end
                 end}
             ]),
             persistent_term:put({?MODULE, events}, #{}),

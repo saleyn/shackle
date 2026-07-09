@@ -182,7 +182,12 @@ bounce(PoolName, SrvIdx) ->
 
 -spec bounce(atom()) -> boolean().
 bounce(SrvName) ->
-    bounce_connection == catch (SrvName ! bounce_connection).
+    try
+        SrvName ! bounce_connection,
+        true
+    catch
+        error:badarg -> false
+    end.
 
 -spec next_bounce(shackle_pool:name(), pos_integer()) ->
     {ok, integer() | infinity} | {error, any}.
@@ -649,7 +654,9 @@ close_socket(#state{socket = Socket, protocol = Protocol,
             } = State) ->
     Reason /= reconnecting andalso
         ?WARN(State#state.pool_name, "#~s: connection closed", [Idx]),
-    Res = catch Protocol:close(Socket),
+    Res = try Protocol:close(Socket)
+          catch _:E -> {'EXIT', E}
+          end,
     trace(State, close, Res),
     MetricsReason =
         case Reason of

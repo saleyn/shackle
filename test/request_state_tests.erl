@@ -43,7 +43,7 @@ setup() ->
 
 cleanup(Cleanup) ->
     shackle_pool:stop(simple),
-    catch shackle_app:stop(),
+    try shackle_app:stop() catch _:_ -> ok end,
     shackle_test_utils:cleanup_mocks(Cleanup).
 
 double_test_() ->

@@ -8,9 +8,9 @@ setup() ->
     Cleanup.
 
 cleanup(Cleanup) ->
-    catch chunking_udp_client:stop(),
-    catch chunking_udp_server:stop(),
-    catch shackle_app:stop(),
+    try chunking_udp_client:stop() catch _:_ -> ok end,
+    try chunking_udp_server:stop() catch _:_ -> ok end,
+    try shackle_app:stop() catch _:_ -> ok end,
     shackle_test_utils:cleanup_mocks(Cleanup).
 
 seq_test_() ->

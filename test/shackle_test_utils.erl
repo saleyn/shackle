@@ -69,7 +69,7 @@ with_mock(Module, Options, Replacements) when
                 false
         end,
     [ok = meck:expect(Module, F, ReplFun) || {F, ReplFun} <- Replacements],
-    fun() -> Unload andalso catch meck:unload(Module) end.
+    fun() -> case Unload of true -> try meck:unload(Module) catch _:_ -> ok end; false -> ok end end.
 
 -spec with_mocks([{atom(), list(), list()} | {atom(), list()} | atom()]) -> [fun(() -> any())].
 with_mocks(Mocks) when is_list(Mocks) ->

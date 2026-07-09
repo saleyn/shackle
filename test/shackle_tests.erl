@@ -294,12 +294,12 @@ setup(Module, Client, PoolOptions, SrvOptions) ->
     Cleanup.
 
 cleanup(Cleanup) ->
-    catch shackle_app:stop(),
+    try shackle_app:stop() catch _:_ -> ok end,
     logger:remove_handler_filter(default, ?MODULE),
     shackle_test_utils:cleanup_mocks(Cleanup).
 
 cleanup(Client, Cleanup) ->
-    catch Client:stop(),
+    try Client:stop() catch _:_ -> ok end,
     Server = server(Client),
-    catch Server:stop(),
+    try Server:stop() catch _:_ -> ok end,
     cleanup(Cleanup).

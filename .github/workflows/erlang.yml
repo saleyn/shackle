@@ -7,7 +7,7 @@ jobs:
       labels: ubuntu-22.04-large
     strategy:
       matrix:
-        erlang: [26, 27]
+        erlang: [28, 29]
 
     container:
       image: erlang:${{ matrix.erlang }}

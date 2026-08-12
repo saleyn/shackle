@@ -113,17 +113,20 @@ call(PoolName, Request, Timeout) ->
 -spec call(atom(), term(), timeout_x(), timeout_x()) ->
     term() | {error, atom()}.
 call(PoolName, Request, Timeout, RecvTimeout) ->
-    Now = now_time(),
-    case cast(PoolName, Request, self(), Timeout, Now) of
-        {ok, RequestId} ->
-            try
-                receive_response(RequestId, RecvTimeout)
-            catch error:timeout ->
-                {error, timeout}
-            end;
-        {error, Reason} ->
-            {error, Reason}
-    end.
+    Dispatcher = shackle_observe:dispatcher(),
+    Dispatcher:call(PoolName, fun() ->
+        Now = now_time(),
+        case cast(PoolName, Request, self(), Timeout, Now) of
+            {ok, RequestId} ->
+                try
+                    receive_response(RequestId, RecvTimeout)
+                catch error:timeout ->
+                    {error, timeout}
+                end;
+            {error, Reason} ->
+                {error, Reason}
+        end
+    end).
 
 %% @doc Processes a request.
 %% Parameters:
@@ -165,8 +168,11 @@ cast(PoolName, Request, Pid) when is_pid(Pid); Pid == undefined ->
 -spec cast(shackle_pool:name(), term(), undefined | pid(), timeout_x()) ->
     {ok, request_id()} | {error, atom()}.
 cast(PoolName, Request, Pid, Timeout) ->
-    Now = now_time(),
-    cast(PoolName, Request, Pid, Timeout, Now).
+    Dispatcher = shackle_observe:dispatcher(),
+    Dispatcher:cast(PoolName, fun() ->
+        Now = now_time(),
+        cast(PoolName, Request, Pid, Timeout, Now)
+    end).
 
 -spec cast(shackle_pool:name(), term(), undefined | pid(), timeout_x(), non_neg_integer()) ->
     {ok, request_id()} | {error, atom()}.

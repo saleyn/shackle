@@ -202,6 +202,12 @@ shackle_pool:start(pool_name(), client(), client_options(), pool_options())
         function will receive three arguments: `PoolName::atom()`, `ServerInstance::integer()`, and `Event::map()`. This is
         useful for troubleshooting and logging.</td>
   </tr>
+  <tr>
+    <td>servers</td>
+    <td>[string() | {string(), inet:port_number()}]</td>
+    <td>undefined</td>
+    <td>list of server addresses for multi-server failover (see below)</td>
+  </tr>
 </table>
 
 ##### pool_options:
@@ -238,6 +244,44 @@ shackle_pool:start(pool_name(), client(), client_options(), pool_options())
     <td>connection selection strategy</td>
   </tr>
 </table>
+
+#### Multi-server failover
+
+_These features were copied from the [Arterial](https://github.com/saleyn/arterial) project._
+
+Shackle supports multiple server addresses for automatic failover and high availability. When a connection to one server fails, the client automatically tries the next server in the list.
+
+```erlang
+%% Multiple servers with shared port
+shackle_pool:start(my_pool, my_client, [
+    {port, 9000},
+    {servers, [
+        "server1.example.com",
+        "server2.example.com",
+        "server3.example.com"
+    ]}
+], []).
+
+%% Per-server ports
+shackle_pool:start(my_pool, my_client, [
+    {port, 9000},
+    {servers, [
+        "server1.example.com",          % Uses default port 9000
+        {"server2.example.com", 9001},  % Overrides with port 9001
+        {"server3.example.com", 9002}
+    ]}
+], []).
+```
+
+Failover behavior:
+
+1. The client tries the current server with full retry logic (respecting `max_retries`)
+2. On failure, moves to the next server in the list
+3. After all servers are exhausted, applies exponential backoff and retries from the first server
+
+DNS resolution results are cached (5-minute TTL) and hostnames resolving to multiple IPs get random selection per connection attempt. Kubernetes service names are automatically detected and resolved using cluster DNS search domains.
+
+Existing single-server configurations (`{address, Host}` + `{port, Port}`) continue to work unchanged.
 
 #### Calling / Casting client
 

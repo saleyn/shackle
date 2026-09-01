@@ -261,9 +261,7 @@ options_rec(Client, Options) ->
     }.
 
 server(Name, _Count, #pool_options{ client = Client }, 0) ->
-    prometheus_counter:inc(shackle_error_total, [
-        Client, Name, <<"no server">>
-    ]),
+    observe_pool_metric(Client, Name, shackle_error_total, <<"no server">>),
     {error, no_server};
 server(
     Name,
@@ -287,17 +285,22 @@ server(
                     {ok, ServerName} = shackle_pool_foil:lookup(ServerId),
                     {ok, Client, ServerName, Sema};
                 error ->
-                    prometheus_counter:inc(shackle_attempt_total, [
-                        Client, Name, <<"backlog full">>
-                    ]),
+                    observe_pool_metric(Client, Name, shackle_attempt_total, <<"backlog full">>),
                     server(Name, Count, Options, N - 1)
             end;
         false ->
-            prometheus_counter:inc(shackle_attempt_total, [
-                Client, Name, <<"disabled">>
-            ]),
+            observe_pool_metric(Client, Name, shackle_attempt_total, <<"disabled">>),
             server(Name, Count, Options, N - 1)
     end.
+
+%% @doc Emit observability event for pool metrics
+observe_pool_metric(Client, Pool, Metric, Reason) ->
+    shackle_observe:event([metric, counter], #{count => 1}, #{
+        metric => Metric,
+        client => Client,
+        pool => Pool,
+        reason => Reason
+    }).
 
 server_id(Name, PoolSize, random) ->
     {Name, shackle_utils:random(PoolSize)};

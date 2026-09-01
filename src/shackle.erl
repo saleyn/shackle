@@ -182,7 +182,7 @@ cast(PoolName, Request, Pid, Timeout, Timestamp) ->
             Cast = mk_cast(Client, Server, Pid, Sema, Timestamp, Timeout),
             try
                 Server ! {request, [Cast, Request]},
-                prometheus_counter:inc(shackle_cast_total, [Client, PoolName]),
+                observe_cast_metric(Client, PoolName, 1),
                 {ok, Cast#cast.request_id}
             catch error:badarg ->
                 {error, {bad_server, Server}}
@@ -349,7 +349,7 @@ batch_cast(PoolName, Requests, Pid, Timeout) when is_list(Requests) ->
             {Casts, RequestRefs} = lists:unzip(CastsRequestRefs),
             try
                 Server ! {request, [Casts, Requests, Count]},
-                prometheus_counter:inc(shackle_cast_total, [Client, PoolName], Count),
+                observe_cast_metric(Client, PoolName, Count),
                 {ok, {BatchRef, Count, RequestRefs}}
             catch error:badarg ->
                 {error, {bad_server, Server}}
@@ -691,3 +691,11 @@ timeout({at, StoptimeMs}) ->
         _ ->
             0
     end.
+
+%% @doc Emit observability event for cast metrics
+observe_cast_metric(Client, Pool, Count) ->
+    shackle_observe:event([metric, counter], #{count => Count}, #{
+        metric => shackle_cast_total,
+        client => Client,
+        pool => Pool
+    }).

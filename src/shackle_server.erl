@@ -1094,12 +1094,30 @@ inc_metrics(#state{service_name = SName, pool_name = Pool}, Metric, Inc) when is
 inc_metrics(#state{service_name = SName, pool_name = Pool}, Metric, Reason) when is_binary(Reason) ->
     log_metrics2(Metric, [SName, Pool, Reason], 1).
 
-log_metrics2(Metric, Args, N) ->
-    prometheus_counter:inc(Metric, Args, N).
+log_metrics2(Metric, [SName, Pool], N) ->
+    % Emit observability event for metric counting
+    shackle_observe:event([metric, counter], #{count => N}, #{
+        metric       => Metric,
+        service_name => SName,
+        pool         => Pool
+    });
+log_metrics2(Metric, [SName, Pool, Reason], 1) ->
+    % Emit observability event for metric with reason/label
+    shackle_observe:event([metric, counter], #{count => 1}, #{
+        metric       => Metric,
+        service_name => SName,
+        pool         => Pool,
+        reason       => Reason
+    }).
 
 observe_metrics(#state{service_name = SName, pool_name = PoolName}, #cast{timestamp = Timestamp}, Metric) ->
     TimeDiff = os:system_time(microsecond) - Timestamp,
-    prometheus_histogram:observe(Metric, [SName, PoolName], TimeDiff).
+    % Emit observability event for histogram
+    shackle_observe:event([metric, histogram], #{value => TimeDiff}, #{
+        metric       => Metric,
+        service_name => SName,
+        pool         => PoolName
+    }).
 
 report_socket_rtt(#state{client = Client, pool_name = PoolName, socket = Socket}) ->
     case persistent_term:get({shackle_socket_rtt_callback, Client}, undefined) of

@@ -693,9 +693,12 @@ timeout({at, StoptimeMs}) ->
     end.
 
 %% @doc Emit observability event for cast metrics
+%% Sends observability metric event for cast operations.
+%% The 'client' metadata maps to the prometheus 'client' label,
+%% maintaining compatibility with original shackle_metrics definitions.
 observe_cast_metric(Client, Pool, Count) ->
-    shackle_observe:event([metric, counter], #{count => Count}, #{
+    shackle_observe:event([shackle, metric, counter], #{count => Count}, #{
         metric => shackle_cast_total,
         client => Client,
-        pool => Pool
+        pool   => Pool
     }).

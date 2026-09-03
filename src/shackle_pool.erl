@@ -314,7 +314,6 @@ setup(Name, #pool_options {
         backlog_size = BacklogSize,
         pool_size = PoolSize
     } = OptionsRec) ->
-    shackle_metrics:init(),
     shackle_sema:new(Name, PoolSize, BacklogSize),
     %% Create a semaphore for this pool name to be used for checking if a
     %% connection can be bounced gracefully. The semaphore is used to permit

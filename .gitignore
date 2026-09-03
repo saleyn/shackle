@@ -1,4 +1,5 @@
 doc/README.md
 erl_crash.dump
+rebar3.crashdump
 fprofx.*
 _build

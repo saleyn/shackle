@@ -1113,33 +1113,30 @@ bounce_check(State, ClientState, _) ->
 inc_metrics(State, Metric) ->
     inc_metrics(State, Metric, 1).
 inc_metrics(#state{service_name = SName, pool_name = Pool}, Metric, Inc) when is_integer(Inc) ->
-    log_metrics2(Metric, [SName, Pool], Inc);
+    log_metrics2(#{
+        metric => Metric,
+        client => SName,
+        pool   => Pool
+    }, Inc);
 inc_metrics(#state{service_name = SName, pool_name = Pool}, Metric, Reason) when is_binary(Reason) ->
-    log_metrics2(Metric, [SName, Pool, Reason], 1).
+    log_metrics2(#{
+        metric => Metric,
+        client => SName,
+        pool   => Pool,
+        reason => Reason
+    }, 1).
 
-log_metrics2(Metric, [SName, Pool], N) ->
+log_metrics2(Metadata, N) ->
     % Emit observability event for metric counting
-    shackle_observe:event([metric, counter], #{count => N}, #{
-        metric       => Metric,
-        service_name => SName,
-        pool         => Pool
-    });
-log_metrics2(Metric, [SName, Pool, Reason], 1) ->
-    % Emit observability event for metric with reason/label
-    shackle_observe:event([metric, counter], #{count => 1}, #{
-        metric       => Metric,
-        service_name => SName,
-        pool         => Pool,
-        reason       => Reason
-    }).
+    shackle_observe:event([metric, counter], #{count => N}, Metadata).
 
 observe_metrics(#state{service_name = SName, pool_name = PoolName}, #cast{timestamp = Timestamp}, Metric) ->
     TimeDiff = os:system_time(microsecond) - Timestamp,
     % Emit observability event for histogram
     shackle_observe:event([metric, histogram], #{value => TimeDiff}, #{
-        metric       => Metric,
-        service_name => SName,
-        pool         => PoolName
+        metric => Metric,
+        client => SName,
+        pool   => PoolName
     }).
 
 report_socket_rtt(#state{client = Client, pool_name = PoolName, socket = Socket}) ->

@@ -25,7 +25,7 @@ Starts the `telemetry` application if it isn't already running.
 """.
 -spec start(any()) -> ok.
 start(_Opts) ->
-    _ = ensure_started(),
+    ensure_started(),
     ok.
 
 -doc """
@@ -34,10 +34,7 @@ started it (a host application that already had `telemetry` running keeps it run
 """.
 -spec stop() -> ok.
 stop() ->
-    case ensure_started() of
-        internal -> application:stop(telemetry);
-        _        -> ok
-    end,
+    ensure_started() == internal andalso application:stop(telemetry),
     persistent_term:erase(?MODULE),
     ok.
 

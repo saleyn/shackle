@@ -49,7 +49,7 @@ re-declares the same metrics (a no-op).
 """.
 -spec start(map()) -> ok.
 start(_Opts) ->
-    _ = ensure_started(),
+    ensure_started(),
 
     % Original counters from shackle_metrics.erl
     try prometheus_counter:declare([
@@ -150,10 +150,7 @@ started it (a host application that already had `prometheus` running keeps it ru
 """.
 -spec stop() -> ok.
 stop() ->
-    case ensure_started() of
-        internal -> application:stop(prometheus);
-        _        -> ok
-    end,
+    ensure_started() == internal andalso application:stop(prometheus),
     persistent_term:erase(?MODULE),
     ok.
 
@@ -188,36 +185,36 @@ ensure_started() ->
 %%%
 
 % [shackle, call, stop] -> shackle_request_total
-handle_event([shackle, call, stop], _Measurements, #{pool := Pool, service_name := Service}) ->
-    prometheus_counter:inc(shackle_request_total, [Service, Pool], 1);
+handle_event([shackle, call, stop], _Measurements, #{pool := Pool, client := Client}) ->
+    prometheus_counter:inc(shackle_request_total, [Client, Pool], 1);
 
 % [shackle, cast, stop] -> shackle_cast_total
-handle_event([shackle, cast, stop], _Measurements, #{pool := Pool, service_name := Service}) ->
-    prometheus_counter:inc(shackle_cast_total, [Service, Pool], 1);
+handle_event([shackle, cast, stop], _Measurements, #{pool := Pool, client := Client}) ->
+    prometheus_counter:inc(shackle_cast_total, [Client, Pool], 1);
 
 % [shackle, connect, stop] -> shackle_connect_total
-handle_event([shackle, connect, stop], _Measurements, #{pool := Pool, service_name := Service}) ->
-    prometheus_counter:inc(shackle_connect_total, [Service, Pool], 1);
+handle_event([shackle, connect, stop], _Measurements, #{pool := Pool, client := Client}) ->
+    prometheus_counter:inc(shackle_connect_total, [Client, Pool], 1);
 
 % [shackle, disconnect] -> shackle_close_total
-handle_event([shackle, disconnect], _Measurements, #{pool := Pool, service_name := Service}) ->
-    prometheus_counter:inc(shackle_close_total, [Service, Pool], 1);
+handle_event([shackle, disconnect], _Measurements, #{pool := Pool, client := Client}) ->
+    prometheus_counter:inc(shackle_close_total, [Client, Pool], 1);
 
 % [shackle, timeout] -> shackle_error_total{reason=timeout}
-handle_event([shackle, timeout], _Measurements, #{pool := Pool, service_name := Service}) ->
-    prometheus_counter:inc(shackle_error_total, [Service, Pool, <<"timeout">>], 1);
+handle_event([shackle, timeout], _Measurements, #{pool := Pool, client := Client}) ->
+    prometheus_counter:inc(shackle_error_total, [Client, Pool, <<"timeout">>], 1);
 
 % [shackle, call, exception] -> shackle_error_total{reason=exception}
-handle_event([shackle, call, exception], _Measurements, #{pool := Pool, service_name := Service}) ->
-    prometheus_counter:inc(shackle_error_total, [Service, Pool, <<"exception">>], 1);
+handle_event([shackle, call, exception], _Measurements, #{pool := Pool, client := Client}) ->
+    prometheus_counter:inc(shackle_error_total, [Client, Pool, <<"exception">>], 1);
 
 % [shackle, cast, exception] -> shackle_error_total{reason=exception}
-handle_event([shackle, cast, exception], _Measurements, #{pool := Pool, service_name := Service}) ->
-    prometheus_counter:inc(shackle_error_total, [Service, Pool, <<"exception">>], 1);
+handle_event([shackle, cast, exception], _Measurements, #{pool := Pool, client := Client}) ->
+    prometheus_counter:inc(shackle_error_total, [Client, Pool, <<"exception">>], 1);
 
 % [shackle, connect, exception] -> shackle_error_total{reason=exception}
-handle_event([shackle, connect, exception], _Measurements, #{pool := Pool, service_name := Service}) ->
-    prometheus_counter:inc(shackle_error_total, [Service, Pool, <<"exception">>], 1);
+handle_event([shackle, connect, exception], _Measurements, #{pool := Pool, client := Client}) ->
+    prometheus_counter:inc(shackle_error_total, [Client, Pool, <<"exception">>], 1);
 
 %%%
 %%% Metric Events (low-level telemetry from shackle_server.erl)
@@ -226,60 +223,60 @@ handle_event([shackle, connect, exception], _Measurements, #{pool := Pool, servi
 % [shackle, metric, counter] with reason label
 handle_event([shackle, metric, counter], #{count := Count}, #{
     metric := Metric,
-    service_name := Service,
-    pool := Pool,
+    client := Client,
+    pool   := Pool,
     reason := Reason
 }) ->
-    prometheus_counter:inc(Metric, [Service, Pool, Reason], Count);
+    prometheus_counter:inc(Metric, [Client, Pool, Reason], Count);
 
 % [shackle, metric, counter] without reason label
 handle_event([shackle, metric, counter], #{count := Count}, #{
     metric := Metric,
-    service_name := Service,
-    pool := Pool
+    client := Client,
+    pool   := Pool
 }) ->
-    prometheus_counter:inc(Metric, [Service, Pool], Count);
+    prometheus_counter:inc(Metric, [Client, Pool], Count);
 
 % [shackle, metric, histogram] -> route to specific histogram
 handle_event([shackle, metric, histogram], #{value := Value}, #{
     metric := Metric,
-    service_name := Service,
-    pool := Pool
+    client := Client,
+    pool   := Pool
 }) ->
-    prometheus_histogram:observe(Metric, [Service, Pool], Value);
+    prometheus_histogram:observe(Metric, [Client, Pool], Value);
 
 %%%
 %%% Additional Legacy Span Event Handlers (for completeness)
 %%%
 
 % [shackle, reply] -> shackle_reply_total
-handle_event([shackle, reply], _Measurements, #{pool := Pool, service_name := Service}) ->
-    prometheus_counter:inc(shackle_reply_total, [Service, Pool], 1);
+handle_event([shackle, reply], _Measurements, #{pool := Pool, client := Client}) ->
+    prometheus_counter:inc(shackle_reply_total, [Client, Pool], 1);
 
 % [shackle, response] -> shackle_response_total
-handle_event([shackle, response], #{}, #{pool := Pool, service_name := Service, status := Status}) ->
+handle_event([shackle, response], #{}, #{pool := Pool, client := Client, status := Status}) ->
     StatusStr = format_status(Status),
-    prometheus_counter:inc(shackle_response_total, [Service, Pool, StatusStr], 1);
+    prometheus_counter:inc(shackle_response_total, [Client, Pool, StatusStr], 1);
 
 % [shackle, socket] -> shackle_socket_total
-handle_event([shackle, socket], #{}, #{pool := Pool, service_name := Service, event := Event}) ->
+handle_event([shackle, socket], #{}, #{pool := Pool, client := Client, event := Event}) ->
     EventStr = format_event(Event),
-    prometheus_counter:inc(shackle_socket_total, [Service, Pool, EventStr], 1);
+    prometheus_counter:inc(shackle_socket_total, [Client, Pool, EventStr], 1);
 
 % [shackle, data, received] -> shackle_received_bytes_total and shackle_received_messages_total
-handle_event([shackle, data, received], #{bytes := Bytes}, #{pool := Pool, service_name := Service}) ->
-    prometheus_counter:inc(shackle_received_bytes_total, [Service, Pool], Bytes),
-    prometheus_counter:inc(shackle_received_messages_total, [Service, Pool], 1);
+handle_event([shackle, data, received], #{bytes := Bytes}, #{pool := Pool, client := Client}) ->
+    prometheus_counter:inc(shackle_received_bytes_total, [Client, Pool], Bytes),
+    prometheus_counter:inc(shackle_received_messages_total, [Client, Pool], 1);
 
 % [shackle, response_time] -> shackle_response_time_microseconds histogram
-handle_event([shackle, response_time], #{microseconds := Us}, #{pool := Pool, service_name := Service}) ->
-    prometheus_histogram:observe(shackle_response_time_microseconds, [Service, Pool], Us);
+handle_event([shackle, response_time], #{microseconds := Us}, #{pool := Pool, client := Client}) ->
+    prometheus_histogram:observe(shackle_response_time_microseconds, [Client, Pool], Us);
 
 % [shackle, server_lookup, attempt] -> shackle_attempt_total
 handle_event([shackle, server_lookup, attempt], _Measurements,
-             #{pool := Pool, service_name := Service, reason := Reason}) ->
+             #{pool := Pool, client := Client, reason := Reason}) ->
     ReasonStr = format_reason(Reason),
-    prometheus_counter:inc(shackle_attempt_total, [Service, Pool, ReasonStr], 1);
+    prometheus_counter:inc(shackle_attempt_total, [Client, Pool, ReasonStr], 1);
 
 % Catch-all for unknown events
 handle_event(_EventName, _Measurements, _Metadata) ->

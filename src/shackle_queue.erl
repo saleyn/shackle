@@ -70,12 +70,12 @@ pending(Table, ServerId) ->
     Match = {{ServerId, '_'}, '_'},
     ets:match_object(Table, Match).
 
-%% @doc Return the current length of the pending queue for all connections
+-doc "Return the current length of the pending queue for all connections".
 -spec length(Table :: shackle:table()) -> non_neg_integer().
 length(Table) ->
     ets:info(Table, size).
 
-%% @doc Check if the queue for a single connection is empty
+-doc "Check if the queue for a single connection is empty".
 -spec empty(Table :: shackle:table(), ServerId :: shackle_server:id()) ->
     boolean().
 empty(Table, ServerId) ->

@@ -1,14 +1,14 @@
 # shackle
 
-High-Performance Erlang Network Client Framework
-
 ![Build Status](https://github.com/lpgauth/shackle/workflows/Erlang%20CI/badge.svg)
 
-This project is an open-source connection connection-pooling library.
+This project is an open-source connection connection-pooling library that
+implements a high-performance Erlang framework for building scalable network
+clients and servers.
 
 #### Requirements
 
-* Erlang 19.0+
+* Erlang 27+
 
 #### Features
 
@@ -21,6 +21,8 @@ This project is an open-source connection connection-pooling library.
 * Request pipelining
 * Smart reconnect mechanism (exponential backoff)
 * Defining timeout of an established connection
+* Pluggable observability
+* Customizable server address resolution (DNS, K8s, caching, etc.)
 
 #### Framework goals
 

@@ -96,30 +96,33 @@ stop(Name) ->
             {error, Reason}
     end.
 
-%% @doc Initialize a bounce request for a single connection in the pool.
-%% Only one connection is allowed to bounce at a time. The synchronization
-%% is implemented by using a semaphore.
+-doc """
+Initialize a bounce request for a single connection in the pool. Only one
+connection is allowed to bounce at a time. The synchronization is implemented by
+using a semaphore.
+""".
 -spec init_bounce(shackle_pool:name()) -> boolean().
 init_bounce(Name) ->
     Sema = persistent_term:get({bounce_sema, Name}),
     {ok, 1} == sema_nif:acquire(Sema).
 
-%% @doc Finalize a bounce request.
-%% This function must be called after `init_bounce/1' and when a connection
-%% bounce got completed.
+-doc """
+Finalize a bounce request. This function must be called after `init_bounce/1`
+and when a connection bounce got completed.
+""".
 -spec finalize_bounce(shackle_pool:name()) -> ok.
 finalize_bounce(Name) ->
     Sema = persistent_term:get({bounce_sema, Name}),
     sema_nif:release(Sema),
     ok.
 
-%% @doc Wait until the given server pool is available to accept requests
+-doc "Wait until the given server pool is available to accept requests".
 -spec wait_until_any_available(shackle_pool:name(), non_neg_integer()) -> boolean().
 wait_until_any_available(Name, Timeout) when is_integer(Timeout) ->
     Now = os:system_time(millisecond),
     wait_until_available2(any, Name, Now, Now + Timeout).
 
-%% @doc Wait until the given server pool is available to accept requests
+-doc "Wait until the given server pool is available to accept requests".
 -spec wait_until_all_available(shackle_pool:name(), non_neg_integer()) -> boolean().
 wait_until_all_available(Name, Timeout) when is_integer(Timeout) ->
     Now = os:system_time(millisecond),
@@ -139,7 +142,7 @@ wait_until_available2(Method, Name, _Now, Expiration) ->
 active(any, Name) -> active_any(Name);
 active(all, Name) -> active_all(Name).
 
-%% @doc Return true if the pool has at least one available connection
+-doc "Return true if the pool has at least one available connection".
 -spec active_any(shackle_pool:name()) -> boolean().
 active_any(Name) ->
     case options(Name) of
@@ -151,7 +154,7 @@ active_any(Name) ->
             false
     end.
 
-%% @doc Return true if all connections in the pool are available
+-doc "Return true if all connections in the pool are available".
 -spec active_all(shackle_pool:name()) -> boolean().
 active_all(Name) ->
     case options(Name) of
@@ -163,7 +166,7 @@ active_all(Name) ->
             false
     end.
 
-%% @doc Return a list of connection handling server names and their active status
+-doc "Return a list of connection handling server names and their active status".
 -spec status(shackle_pool:name()) -> [{atom(), active | inactive}].
 status(Name) ->
     case options(Name) of
@@ -293,7 +296,7 @@ server(
             server(Name, Count, Options, N - 1)
     end.
 
-%% @doc Emit observability event for pool metrics
+-doc "Emit observability event for pool metrics".
 observe_pool_metric(Client, Pool, Metric, Reason) ->
     shackle_observe:event([metric, counter], #{count => 1}, #{
         metric => Metric,

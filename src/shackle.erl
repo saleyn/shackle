@@ -81,28 +81,32 @@
 
 %% public
 
-%% @doc Processes a request.
-%% Parameters:
-%% <dl>
-%% <dt>PoolName</dt><dd>The name of connection pool</dd>
-%% <dt>Request</dt><dd>The request to process</dd>
-%% </dl>
-%%  Returns:
-%% <dl><dt></dt><dd>A reply</dd></dl>
+-doc """
+Processes a request. Parameters:
+
+- `PoolName` — The name of connection pool
+- `Request` — The request to process
+
+Returns:
+
+A reply term.
+""".
 -spec call(shackle_pool:name(), term()) ->
     term() | {error, term()}.
 call(PoolName, Request) ->
     call(PoolName, Request, ?DEFAULT_TIMEOUT, infinity).
 
-%% @doc Processes a request.
-%% Parameters:
-%% <dl>
-%% <dt>PoolName</dt><dd>The name of connection pool</dd>
-%% <dt>Request</dt><dd>The request to process</dd>
-%% <dt>Timeout</dt><dd>The time period allocated to process the requests</dd>
-%% </dl>
-%%  Returns:
-%% <dl><dt></dt><dd>A reply</dd></dl>
+-doc """
+Processes a request. Parameters:
+
+- `PoolName` — The name of connection pool
+- `Request` — The request to process
+- `Timeout` — The time period allocated to process the requests
+
+Returns:
+
+A reply term
+""".
 -spec call(atom(), term(), timeout_x()) ->
     term() | {error, atom()}.
 call(PoolName, Request, Timeout) ->
@@ -128,43 +132,51 @@ call(PoolName, Request, Timeout, RecvTimeout) ->
         end
     end).
 
-%% @doc Processes a request.
-%% Parameters:
-%% <dl>
-%% <dt>PoolName</dt><dd>The name of connection pool</dd>
-%% <dt>Request</dt><dd>The request to process</dd>
-%% </dl>
-%%  Returns:
-%% <dl><dt></dt><dd>The request ID of the request being processed</dd></dl>
+-doc """
+Processes a request. Parameters:
+
+- `PoolName` — The name of connection pool
+- `Request` — The request to process
+
+Returns:
+
+The request ID of the request being processed
+""".
 -spec cast(shackle_pool:name(), term()) ->
     {ok, request_id()} | {error, atom()}.
 cast(PoolName, Request) ->
     cast(PoolName, Request, self()).
 
-%% @doc Processes a request.
-%% Parameters:
-%% <dl>
-%% <dt>PoolName</dt><dd>The name of connection pool</dd>
-%% <dt>Request</dt><dd>The request to process</dd>
-%% <dt>Pid</dt><dd>The process identifier to process the requests</dd>
-%% </dl>
-%%  Returns:
-%% <dl><dt></dt><dd>The request ID of the request being processed</dd></dl>
+-doc """
+Processes a request. Parameters:
+
+- `PoolName` — The name of connection pool
+- `Request` — The request to process
+- `Pid` — The process identifier to process the requests
+
+Returns:
+
+The request ID of the request being processed or error:
+`{ok, RequestID} | {error, Reason}`
+""".
 -spec cast(shackle_pool:name(), term(), undefined | pid()) ->
     {ok, request_id()} | {error, atom()}.
 cast(PoolName, Request, Pid) when is_pid(Pid); Pid == undefined ->
     cast(PoolName, Request, Pid, ?DEFAULT_TIMEOUT).
 
-%% @doc Processes a request.
-%% Parameters:
-%% <dl>
-%% <dt>PoolName</dt><dd>The name of connection pool</dd>
-%% <dt>Request</dt><dd>The request to process</dd>
-%% <dt>Pid</dt><dd>The process identifier to process the requests</dd>
-%% <dt>Timeout</dt><dd>The time period allocated to process the requests</dd>
-%% </dl>
-%%  Returns:
-%% <dl><dt></dt><dd>The request ID of the request being processed</dd></dl>
+-doc """
+Processes a request. Parameters:
+
+- `PoolName` — The name of connection pool
+- `Request` — The request to process
+- `Pid` — The process identifier to process the requests
+- `Timeout` — The time period allocated to process the requests
+
+Returns:
+
+The request ID of the request being processed or error:
+`{ok, RequestID} | {error, Reason}`
+""".
 -spec cast(shackle_pool:name(), term(), undefined | pid(), timeout_x()) ->
     {ok, request_id()} | {error, atom()}.
 cast(PoolName, Request, Pid, Timeout) ->
@@ -191,28 +203,35 @@ cast(PoolName, Request, Pid, Timeout, Timestamp) ->
             {error, Reason}
     end.
 
-%% @doc Processes a list of requests.
-%% Parameters:
-%% <dl>
-%% <dt>PoolName</dt><dd>The name of connection pool</dd>
-%% <dt>Requests</dt><dd>The list of requests</dd>
-%% </dl>
-%%  Returns:
-%% <dl><dt></dt><dd>A list of replies</dd></dl>
+-doc """
+Processes a list of requests. Parameters:
+
+- `PoolName` — The name of connection pool
+- `Requests` — The list of requests
+
+Returns:
+
+A list of replies for each request:
+`[{ok, RequestID} | {error, Reason}]`
+
+""".
 -spec batch_call(shackle_pool:name(), [term()]) ->
     [{ok, reply()} | {error, no_reply | timeout}] | {error, term()}.
 batch_call(PoolName, Requests) ->
     batch_call(PoolName, Requests, ?DEFAULT_TIMEOUT).
 
-%% @doc Processes a list of requests.
-%% Parameters:
-%% <dl>
-%% <dt>PoolName</dt><dd>The name of connection pool</dd>
-%% <dt>Requests</dt><dd>The list of requests</dd>
-%% <dt>Timeout</dt><dd>The time period allocated to process the requests</dd>
-%% </dl>
-%%  Returns:
-%% <dl><dt></dt><dd>A list of replies</dd></dl>
+-doc """
+Processes a list of requests. Parameters:
+
+- `PoolName` — The name of connection pool
+- `Requests` — The list of requests
+- `Timeout` — The time period allocated to process the requests
+
+Returns:
+
+A list of replies for each request:
+`[{ok, RequestID} | {error, Reason}]`
+""".
 -spec batch_call(atom(), [term()], timeout_x()) ->
     [{ok, reply()} | {error, no_reply | timeout}] | {error, term()}.
 batch_call(PoolName, Requests, Timeout) ->
@@ -233,25 +252,29 @@ batch_call(PoolName, Requests, Timeout, RecvTimeout) when is_list(Requests) ->
             {error, Reason}
     end.
 
-%% @doc Processes a list of requests.
-%%
-%% Assumes that replies arrive in the order of submitted requests.
-%% A batch of requests may return the same number (or fewer) replies.  If the
-%% underlying protocol is such that a server answers with a subset of replies
-%% for a batch of requests, the requests with `RequestIDs' that don't have
-%% replies will contain `{error, no_reply}'.  When some requests timeout while
-%% waiting for the server's reply, they would return `{error, timeout}'.
-%%
-%% When there is a problem calling the server, the function returns
-%% `{error, Reason}'.
-%%
-%% Parameters:
-%% <dl>
-%% <dt>PoolName</dt><dd>The name of connection pool</dd>
-%% <dt>Requests</dt><dd>The list of requests</dd>
-%% </dl>
-%%  Returns:
-%% <dl><dt></dt><dd>A list of replies</dd></dl>
+-doc """
+Processes a list of requests.
+
+Assumes that replies arrive in the order of submitted requests. A batch of
+requests may return the same number (or fewer) replies.  If the underlying
+protocol is such that a server answers with a subset of replies for a batch of
+requests, the requests with `RequestIDs` that don't have replies will contain
+`{error, no_reply}`.  When some requests timeout while waiting for the server's
+reply, they would return `{error, timeout}`.
+
+When there is a problem calling the server, the function returns `{error,
+Reason}`.
+
+Parameters:
+
+- `PoolName` — The name of connection pool
+- `Requests` — The list of requests
+
+Returns:
+
+A list of replies for each request:
+`[{ok, RequestID} | {error, Reason}]`
+""".
 -spec batch_call_expect_ordered_replies(atom(), [request()]) ->
     [{ok, reply()} | {error, no_reply | timeout}] | {error, term()}.
 batch_call_expect_ordered_replies(_, []) ->
@@ -259,26 +282,30 @@ batch_call_expect_ordered_replies(_, []) ->
 batch_call_expect_ordered_replies(PoolName, Requests) when is_list(Requests) ->
     batch_call_expect_ordered_replies(PoolName, Requests, ?DEFAULT_TIMEOUT).
 
-%% @doc Processes a list of requests.
-%%
-%% Assumes that replies arrive in the order of submitted requests.
-%% A batch of requests may return the same number (or fewer) replies.  If the
-%% underlying protocol is such that a server answers with a subset of replies
-%% for a batch of requests, the requests with `RequestIDs' that don't have
-%% replies will contain `{error, no_reply}'.  When some requests timeout while
-%% waiting for the server's reply, they would return `{error, timeout}'.
-%%
-%% When there is a problem calling the server, the function returns
-%% `{error, Reason}'.
-%%
-%% Parameters:
-%% <dl>
-%% <dt>PoolName</dt><dd>The name of connection pool</dd>
-%% <dt>Requests</dt><dd>The list of requests</dd>
-%% <dt>Timeout</dt><dd>The time period allocated to process the requests</dd>
-%% </dl>
-%%  Returns:
-%% <dl><dt></dt><dd>A list of replies</dd></dl>
+-doc """
+Processes a list of requests.
+
+Assumes that replies arrive in the order of submitted requests. A batch of
+requests may return the same number (or fewer) replies.  If the underlying
+protocol is such that a server answers with a subset of replies for a batch of
+requests, the requests with `RequestIDs` that don't have replies will contain
+`{error, no_reply}`.  When some requests timeout while waiting for the server's
+reply, they would return `{error, timeout}`.
+
+When there is a problem calling the server, the function returns `{error,
+Reason}`.
+
+Parameters:
+
+- `PoolName` — The name of connection pool
+- `Requests` — The list of requests
+- `Timeout` — The time period allocated to process the requests
+
+Returns:
+
+A list of replies for each request:
+`[{ok, RequestID} | {error, Reason}]`
+""".
 -spec batch_call_expect_ordered_replies(
         atom(), [request()], timeout_x()) ->
     [{ok, reply()} | {error, no_reply | timeout}] | {error, term()}.
@@ -290,46 +317,55 @@ batch_call_expect_ordered_replies(PoolName, Requests, Timeout) when is_list(Requ
             Err
     end.
 
-%% @doc Processes a list of requests.
-%%
-%% Parameters:
-%% <dl>
-%% <dt>PoolName</dt><dd>The name of connection pool</dd>
-%% <dt>Requests</dt><dd>The list of requests</dd>
-%% </dl>
-%%  Returns:
-%% <dl><dt></dt><dd>The state of the list of requests being processed</dd></dl>
+-doc """
+Processes a list of requests.
+
+Parameters:
+
+- `PoolName` — The name of connection pool
+- `Requests` — The list of requests
+
+Returns:
+
+The state of the list of requests being processed: `{ok, State} | {errror, Reason}`
+""".
 -spec batch_cast(shackle_pool:name(), [term()]) ->
     {ok, batch_state()} | {error, atom()}.
 batch_cast(PoolName, Requests) when is_list(Requests) ->
     batch_cast(PoolName, Requests, self()).
 
-%% @doc Processes a list of requests.
-%%
-%% Parameters:
-%% <dl>
-%% <dt>PoolName</dt><dd>The name of connection pool</dd>
-%% <dt>Requests</dt><dd>The list of requests</dd>
-%% <dt>Pid</dt><dd>The process identifier to process the requests</dd>
-%% </dl>
-%% Returns:
-%% <dl><dt></dt><dd>The state of the list of requests being processed</dd></dl>
+-doc """
+Processes a list of requests.
+
+Parameters:
+
+- `PoolName` — The name of connection pool
+- `Requests` — The list of requests
+- `Pid` — The process identifier to process the requests
+
+Returns:
+
+The state of the list of requests being processed: `{ok, State} | {errror, Reason}`
+""".
 -spec batch_cast(shackle_pool:name(), [term()], undefined | pid()) ->
     {ok, batch_state()} | {error, atom()}.
 batch_cast(PoolName, Requests, Pid) ->
     batch_cast(PoolName, Requests, Pid, ?DEFAULT_TIMEOUT).
 
-%% @doc Processes a list of requests.
-%%
-%% Parameters:
-%% <dl>
-%% <dt>PoolName</dt><dd>The name of connection pool</dd>
-%% <dt>Requests</dt><dd>The list of requests</dd>
-%% <dt>Pid</dt><dd>The process identifier to process the requests</dd>
-%% <dt>Timeout</dt><dd>The time period allocated to process the requests</dd>
-%% </dl>
-%% Returns:
-%% <dl><dt></dt><dd>The state of the list of requests being processed</dd></dl>
+-doc """
+Processes a list of requests.
+
+Parameters:
+
+- `PoolName` — The name of connection pool
+- `Requests` — The list of requests
+- `Pid` — The process identifier to process the requests
+- `Timeout` — The time period allocated to process the requests
+
+Returns:
+
+The state of the list of requests being processed: `{ok, State} | {errror, Reason}`
+""".
 -spec batch_cast(
         shackle_pool:name(), [request()], undefined | pid(), timeout_x()) ->
     {ok, batch_state()} | {error, atom()}.
@@ -358,30 +394,35 @@ batch_cast(PoolName, Requests, Pid, Timeout) when is_list(Requests) ->
             {error, Reason}
     end.
 
-%% @doc Receive response for the list of requests.
-%%
-%% Assumes that replies arrives in the order of submitted requests.
-%% Allows requests not to return replies.
-%% For the requests that do not return replies `no_reply' is returned.
-%%
-%% Parameters:
-%% <dl>
-%% <dt>BatchState</dt><dd>The state of the list of requests being processed</dd>
-%% </dl>
-%%  Returns:
-%% <dl><dt></dt><dd>A list of replies</dd></dl>
+-doc """
+Receive response for the list of requests.
+
+Assumes that replies arrives in the order of submitted requests. Allows requests
+not to return replies. For the requests that do not return replies `no_reply` is
+returned.
+
+Parameters:
+
+- `BatchState` — The state of the list of requests being processed
+
+Returns:
+
+A list of replies: `[{ok, Reply} | {error, Reason}]`
+""".
 -spec receive_batch_expect_ordered_replies(batch_state()) ->
     [{ok, reply()} | {error, no_reply | timeout}].
 receive_batch_expect_ordered_replies(BatchState) ->
     receive_batch_expect_ordered_replies(BatchState, []).
 
-%% @doc Receive response for the list of requests.
-%% Parameters:
-%% <dl>
-%% <dt>BatchState</dt><dd>The state of the list of requests being processed</dd>
-%% </dl>
-%%  Returns:
-%% <dl><dt></dt><dd>A list of replies</dd></dl>
+-doc """
+Receive response for the list of requests. Parameters:
+
+- `BatchState` — The state of the list of requests being processed
+
+Returns:
+
+A list of replies: `[{ok, Reply} | {error, Reason}]`
+""".
 -spec receive_batch_response(batch_state()) ->
     [{request_ref(), reply()} | {error, term()}].
 receive_batch_response(BatchState) ->
@@ -392,29 +433,34 @@ receive_batch_response(BatchState) ->
 receive_batch_response(BatchState, Timeout) when is_integer(Timeout); Timeout==infinity ->
     receive_batch_response(BatchState, [], Timeout).
 
-%% @doc Receive response for the list of requests.
-%% Parameters:
-%% <dl>
-%% <dt>RequestId</dt><dd>The request ID of the request being processed</dd>
-%% </dl>
-%%  Returns:
-%% <dl><dt></dt><dd>A reply</dd></dl>
+-doc """
+Receive response for the list of requests. Parameters:
+
+- `RequestId` — The request ID of the request being processed
+
+Returns:
+
+A reply: `{ok, Reply} | {error, Reason}`
+""".
 -spec receive_response(request_id()) ->
     [{ok, reply()} | {error, no_reply | timeout}] | {error, term()}.
 receive_response(RequestId) ->
     receive_response(RequestId, infinity).
 
-%% @doc Receive response for the list of requests.
-%%
-%% Parameters:
-%% <dl>
-%% <dt>RequestId</dt><dd>The request ID of the request being processed</dd>
-%% </dl>
-%% Returns:
-%% <dl><dt></dt><dd>A reply</dd></dl>
-%%
-%% The function may throw a timeout exception if there is no response received
-%% and a timeout is reached.
+-doc """
+Receive response for the list of requests.
+
+Parameters:
+
+- `RequestId` — The request ID of the request being processed
+
+Returns:
+
+A reply.
+
+The function may throw a timeout exception if there is no response received and
+a timeout is reached.
+""".
 -spec receive_response(request_id(), non_neg_integer()|infinity) ->
     reply() | {error, term()}.
 receive_response(RequestId, Timeout) ->
@@ -428,11 +474,13 @@ receive_response(RequestId, Timeout) ->
         erlang:error(timeout)
     end.
 
-%% @doc Register a socket RTT callback for a specific shackle client.
-%%
-%% The callback `Fun(PoolName, RttUs)' is invoked on each TCP data receive
-%% with the kernel-reported socket RTT in microseconds (Linux TCP_INFO).
-%% Silently no-ops on non-Linux or non-TCP sockets.
+-doc """
+Register a socket RTT callback for a specific shackle client.
+
+The callback `Fun(PoolName, RttUs)` is invoked on each TCP data receive with the
+kernel-reported socket RTT in microseconds (Linux TCP_INFO). Silently no-ops on
+non-Linux or non-TCP sockets.
+""".
 -spec set_socket_rtt_callback(client(), fun((shackle_pool:name(), non_neg_integer()) -> any())) -> ok.
 set_socket_rtt_callback(Client, Fun) when is_atom(Client), is_function(Fun, 2) ->
     persistent_term:put({shackle_socket_rtt_callback, Client}, Fun),
@@ -692,10 +740,11 @@ timeout({at, StoptimeMs}) ->
             0
     end.
 
-%% @doc Emit observability event for cast metrics
-%% Sends observability metric event for cast operations.
-%% The 'client' metadata maps to the prometheus 'client' label,
-%% maintaining compatibility with original shackle_metrics definitions.
+-doc """
+Emit observability event for cast metrics Sends observability metric event for
+cast operations. The 'client' metadata maps to the prometheus 'client' label,
+maintaining compatibility with original shackle_metrics definitions.
+""".
 observe_cast_metric(Client, Pool, Count) ->
     shackle_observe:event([shackle, metric, counter], #{count => Count}, #{
         metric => shackle_cast_total,

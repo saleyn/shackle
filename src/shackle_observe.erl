@@ -162,9 +162,9 @@ terminate(_Reason, Backend) ->
 %%% Internal functions
 
 -spec resolve_module(module() | undefined | nil) -> module() | nil.
-resolve_module(undefined) -> nil;
-resolve_module(nil)       -> nil;
-resolve_module(telemetry) -> shackle_observe_telemetry;
+resolve_module(undefined)  -> nil;
+resolve_module(nil)        -> nil;
+resolve_module(telemetry)  -> shackle_observe_telemetry;
 resolve_module(prometheus) -> shackle_observe_prometheus;
 resolve_module(Mod) when is_atom(Mod) -> Mod;
 resolve_module(_) -> nil.

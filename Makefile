@@ -19,9 +19,9 @@ compile:
 	@echo "Running rebar3 compile..."
 	@$(REBAR3) as compile compile
 
-edoc:
-	@echo "Running rebar3 edoc..."
-	@$(REBAR3) as edoc edoc
+doc:
+	@echo "Running rebar3 ex_doc..."
+	@$(REBAR3) ex_doc
 
 lint elvis xref dialyzer:
 	@echo "Running $@..."
@@ -40,4 +40,4 @@ profile:
 
 test: lint xref eunit dialyzer
 
-.PHONY: bench clean compile dialyzer edoc lint elvis eunit profile xref
+.PHONY: bench clean compile dialyzer doc lint elvis eunit profile xref

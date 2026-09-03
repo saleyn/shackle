@@ -161,7 +161,7 @@ Each connection in the pool maintains its own server list and current position. 
 
 ### Configuration Normalization
 
-The `{servers, [...]}` configuration is normalized at pool startup time to a list of `{Host, Port}` tuples. This happens in `shackle_pool:normalize_client_options/1`.
+The `{servers, [...]}` configuration is normalized at pool startup time to a list of `{Host, Port}` tuples. This normalization processes each hostname through DNS resolution and handles the multi-server failover configuration.
 
 ### Connection Lifecycle
 

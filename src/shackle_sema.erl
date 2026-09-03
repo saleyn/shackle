@@ -54,12 +54,12 @@ release(Sema, Pid) when is_reference(Sema) ->
     sema_nif:release(Sema, 1, Pid),
     ok.
 
-%% @doc Return the size of current backlog
+-doc "Return the size of current backlog".
 -spec count({shackle_pool:name(), non_neg_integer()}) -> non_neg_integer().
 count({PoolName, ServerIdx}) ->
     count(PoolName, ServerIdx).
 
-%% @doc Return the size of current backlog
+-doc "Return the size of current backlog".
 -spec count(shackle_pool:name(), non_neg_integer()) -> non_neg_integer().
 count(PoolName, ServerIdx) ->
     Sema = element(ServerIdx, persistent_term:get({sema, PoolName})),

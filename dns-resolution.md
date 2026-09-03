@@ -564,4 +564,4 @@ Potential improvements for future versions:
 - [Erlang `inet` Module Documentation](https://erlang.org/doc/man/inet.html)
 - [Kubernetes DNS Documentation](https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/)
 - [Arterial DNS Resolution](https://github.com/lpgauth/arterial) (inspiration)
-- [Multi-Server Support](MULTI_SERVER.md) - Uses DNS resolution
+- [Multi-Server Support](multi-server.md) - Uses DNS resolution

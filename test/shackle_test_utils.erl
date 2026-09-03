@@ -3,6 +3,7 @@
 -export([
     preload_modules/0,
     with_prometheus/0,
+    with_prometheus/1,
     cleanup_mocks/1
 ]).
 
@@ -11,6 +12,13 @@ preload_modules() ->
     Filenames = filelib:wildcard("_build/default/lib/*/ebin/*.beam"),
     Rootnames = [filename:rootname(Filename, ".beam") || Filename <- Filenames],
     lists:foreach(fun code:load_abs/1, Rootnames).
+
+with_prometheus(CleanupEnv) when is_list(CleanupEnv) ->
+    List = lists:map(fun
+        ({App, Key, undefined}) -> fun() -> application:unset_env(App, Key) end;
+        ({App, Key, OldVal})    -> fun() -> application:set_env(App, Key, OldVal) end
+    end, CleanupEnv),
+    List ++ with_prometheus().
 
 with_prometheus() ->
     with_mocks([

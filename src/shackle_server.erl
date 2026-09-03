@@ -1,35 +1,26 @@
-%% @doc A process handling a pool of client connections to a server.
-%%
-%% Configuration options:
-%% <du>
-%% <dt>service_name</dt>
-%%  <dd>Name of the endpoint service (defaults to the client module name)</dd>
-%% <dt>init_options</dt>
-%%  <dd>Options passed to the client in the `init/3' callback.</dd>
-%% <dt>address</dt><dd>IP address of the server's endpoint to connect to.</dd>
-%% <dt>port</dt><dd>Server port to connect to.</dd>
-%% <dt>protocol</dt>
-%%  <dd>Connection protocol `shackle_ssl | shackle_tcp | shackle_udp'
-%%      (default: `shackle_tcp').</dd>
-%% <dt>reconnect</dt>
-%%  <dd>When true (default), automatically reconnect upon a disconnect.</dd>
-%% <dt>reconnect_time_min</dt>
-%%  <dd>Min reconnect time in milliseconds (default: `500').</dd>
-%% <dt>reconnect_time_max</dt>
-%%  <dd>Max reconnect time in milliseconds (default: `120000').</dd>
-%% <dt>socket_options</dt><dd>Options passed to the socket (default: `[]')</dd>
-%% <dt>bounce_interval_secs</dt>
-%%  <dd>Interval in seconds when a connection must be forcefully bounced.
-%%      Defaults to `infinity', which disables the bouncing feature. A
-%%      bounce is done on one connection at a time.</dd>
-%% <dt>bounce_udp</dt>
-%%  <dd>When true and bounce_interval_secs is an integer, will allow
-%%      bouncing of UDP connections</dd>
-%% <dt>on_bounce_event</dt>
-%%  <dd>A callback function called on various events related to connection
-%%      bouncing.</dd>
-%% </du>
 -module(shackle_server).
+-moduledoc """
+A process handling a pool of client connections to a server.
+
+Configuration options:
+
+- **service_name**: Name of the endpoint service (defaults to the client module name)
+- **init_options**: Options passed to the client in the `init/3` callback.
+- **address**: IP address of the server's endpoint to connect to.
+- **port**: Server port to connect to.
+- **protocol**: Connection protocol `shackle_ssl | shackle_tcp | shackle_udp` (default:
+`shackle_tcp`).
+- **reconnect**: When true (default), automatically reconnect upon a disconnect.
+- **reconnect_time_min**: Min reconnect time in milliseconds (default: `500`).
+- **reconnect_time_max**: Max reconnect time in milliseconds (default: `120000`).
+- **socket_options**: Options passed to the socket (default: `[]`)
+- **bounce_interval_secs**: Interval in seconds when a connection must be forcefully bounced. Defaults to
+`infinity`, which disables the bouncing feature. A bounce is done on one
+connection at a time.
+- **bounce_udp**: When true and bounce_interval_secs is an integer, will allow bouncing of UDP
+connections
+- **on_bounce_event**: A callback function called on various events related to connection bouncing.
+""".
 -include("shackle_internal.hrl").
 
 -compile(inline).
@@ -212,10 +203,11 @@ next_bounce(SrvName) ->
         {error, R}
     end.
 
-%% @doc Set the bounce event callback.
-%% Use `Fun = undefiend` to clear the bounce event.  The bounce event
-%% is only available if the project is compiled without the `NO_BOUNCE_EVENT'
-%% option.
+-doc """
+Set the bounce event callback. Use `Fun = undefiend` to clear the bounce event.
+The bounce event is only available if the project is compiled without the
+`NO_BOUNCE_EVENT` option.
+""".
 -spec set_bounce_event(shackle_pool:name(), pos_integer(),
                         fun((atom(), integer(), map()) -> ok) | undefined) ->
     ok | not_found.

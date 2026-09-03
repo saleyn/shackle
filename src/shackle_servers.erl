@@ -42,16 +42,16 @@
 %%% Public API
 %%%=============================================================================
 
-%% @doc
-%% Create and normalize a servers list from configuration.
-%%
-%% Input can be:
-%% - A bare hostname: "server.example.com" (uses DefaultPort)
-%% - A tuple: {"server.example.com", 9000}
-%% - A list of mixed: ["server1", {"server2", 9001}, ...]
-%%
-%% Returns a map with normalized servers and initial state.
-%% @end
+-doc """
+Create and normalize a servers list from configuration.
+
+Input can be:
+- A bare hostname: "server.example.com" (uses DefaultPort)
+- A tuple: {"server.example.com", 9000}
+- A list of mixed: ["server1", {"server2", 9001}, ...]
+
+Returns a map with normalized servers and initial state.
+""".
 -spec new(servers_list() | server_entry(), pos_integer()) -> state().
 new(Servers, DefaultPort) when is_list(Servers), is_integer(DefaultPort), DefaultPort > 0 ->
     % Check if this is a string (list of character codes) or list of entries
@@ -77,17 +77,15 @@ new(Servers, DefaultPort) when is_list(Servers), is_integer(DefaultPort), Defaul
 new(Server, DefaultPort) when is_integer(DefaultPort), DefaultPort > 0 ->
     new([Server], DefaultPort).
 
-%% @doc
-%% Get the current server address {Host, Port} from state.
-%% @end
+-doc "Get the current server address {Host, Port} from state.".
 -spec current(state()) -> {string(), pos_integer()}.
 current(#{servers := Servers, index := Index}) ->
     lists:nth(Index + 1, Servers).
 
-%% @doc
-%% Move to the next server in round-robin fashion.
-%% Returns updated state with new index.
-%% @end
+-doc """
+Move to the next server in round-robin fashion. Returns updated state with new
+index.
+""".
 -spec next(state()) -> state().
 next(#{index := Index, total := Total, failed := Failed} = State) ->
     NextIndex = (Index + 1) rem Total,
@@ -97,17 +95,15 @@ next(#{index := Index, total := Total, failed := Failed} = State) ->
         failed => NewFailed
     }.
 
-%% @doc
-%% Check if all servers have been tried in this cycle.
-%% This is true when the number of failed servers equals the total count.
-%% @end
+-doc """
+Check if all servers have been tried in this cycle. This is true when the number
+of failed servers equals the total count.
+""".
 -spec all_failed(state()) -> boolean().
 all_failed(#{failed := Failed, total := Total}) ->
     length(Failed) >= Total.
 
-%% @doc
-%% Reset the failed servers tracking after a successful connection.
-%% @end
+-doc "Reset the failed servers tracking after a successful connection.".
 -spec reset_failed(state()) -> state().
 reset_failed(State) ->
     State#{failed => []}.
@@ -171,19 +167,19 @@ is_valid_hostname_string(Host) ->
 %%% DNS Resolution Functions
 %%%=============================================================================
 
-%% @doc
-%% Resolve a hostname to a list of IP addresses.
-%%
-%% Supports:
-%% - String hostnames: "example.com" or [115,101,114,118,101,114,46,99,111,109]
-%% - Atom hostnames: server_name
-%% - IPv4 tuples: {127, 0, 0, 1}
-%% - IPv6 tuples: {0, 0, 0, 0, 0, 0, 0, 1}
-%% - IPv4 strings: "127.0.0.1"
-%% - Kubernetes services: "my-service.namespace.svc.cluster.local"
-%%
-%% Returns {ok, [IP]} or {error, Reason}
-%% @end
+-doc """
+Resolve a hostname to a list of IP addresses.
+
+Supports:
+- String hostnames: "example.com" or [115,101,114,118,101,114,46,99,111,109]
+- Atom hostnames: server_name
+- IPv4 tuples: {127, 0, 0, 1}
+- IPv6 tuples: {0, 0, 0, 0, 0, 0, 0, 1}
+- IPv4 strings: "127.0.0.1"
+- Kubernetes services: "my-service.namespace.svc.cluster.local"
+
+Returns {ok, [IP]} or {error, Reason}
+""".
 -spec resolve_host(string() | atom() | {integer(), integer(), integer(), integer()}
                    | {integer(), integer(), integer(), integer(),
                       integer(), integer(), integer(), integer()})

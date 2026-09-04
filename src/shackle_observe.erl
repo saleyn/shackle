@@ -56,18 +56,18 @@ span(EventNameSuffix, StartMetadata, Fun) when is_list(EventNameSuffix), is_func
             Fun();
         Backend ->
             StartTime = erlang:monotonic_time(),
-            Backend:event([shackle | EventNameSuffix] ++ [start],
-                         #{monotonic_time => StartTime}, StartMetadata),
+            Pfx = [shackle | EventNameSuffix],
+            Backend:event(Pfx ++ [start], #{monotonic_time => StartTime}, StartMetadata),
             try Fun() of
                 Result ->
                     StopTime = erlang:monotonic_time(),
-                    Backend:event([shackle | EventNameSuffix] ++ [stop],
+                    Backend:event(Pfx ++ [stop],
                                  #{duration => StopTime - StartTime, monotonic_time => StopTime},
                                  StartMetadata),
                     Result
             catch Class:Reason:Stacktrace ->
                 StopTime = erlang:monotonic_time(),
-                Backend:event([shackle | EventNameSuffix] ++ [exception],
+                Backend:event(Pfx ++ [exception],
                              #{duration => StopTime - StartTime, monotonic_time => StopTime},
                              StartMetadata#{kind => Class, reason => Reason}),
                 erlang:raise(Class, Reason, Stacktrace)

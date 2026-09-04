@@ -118,7 +118,8 @@ call(PoolName, Request, Timeout) ->
     term() | {error, atom()}.
 call(PoolName, Request, Timeout, RecvTimeout) ->
     Dispatcher = shackle_observe:dispatcher(),
-    Dispatcher:call(PoolName, fun() ->
+    ClientName = get_pool_client(PoolName),
+    Dispatcher:call(PoolName, ClientName, fun() ->
         Now = now_time(),
         case cast(PoolName, Request, self(), Timeout, Now) of
             {ok, RequestId} ->
@@ -181,7 +182,8 @@ The request ID of the request being processed or error:
     {ok, request_id()} | {error, atom()}.
 cast(PoolName, Request, Pid, Timeout) ->
     Dispatcher = shackle_observe:dispatcher(),
-    Dispatcher:cast(PoolName, fun() ->
+    ClientName = get_pool_client(PoolName),
+    Dispatcher:cast(PoolName, ClientName, fun() ->
         Now = now_time(),
         cast(PoolName, Request, Pid, Timeout, Now)
     end).
@@ -194,7 +196,6 @@ cast(PoolName, Request, Pid, Timeout, Timestamp) ->
             Cast = mk_cast(Client, Server, Pid, Sema, Timestamp, Timeout),
             try
                 Server ! {request, [Cast, Request]},
-                observe_cast_metric(Client, PoolName, 1),
                 {ok, Cast#cast.request_id}
             catch error:badarg ->
                 {error, {bad_server, Server}}
@@ -372,6 +373,16 @@ The state of the list of requests being processed: `{ok, State} | {errror, Reaso
 batch_cast(_, [], _, _) ->
     {ok, {undefined, 0, []}};
 batch_cast(PoolName, Requests, Pid, Timeout) when is_list(Requests) ->
+    Dispatcher = shackle_observe:dispatcher(),
+    ClientName = get_pool_client(PoolName),
+    Dispatcher:cast(PoolName, ClientName, fun() ->
+        batch_cast_impl(PoolName, Requests, Pid, Timeout)
+    end).
+
+-spec batch_cast_impl(
+        shackle_pool:name(), [request()], undefined | pid(), timeout_x()) ->
+    {ok, batch_state()} | {error, atom()}.
+batch_cast_impl(PoolName, Requests, Pid, Timeout) ->
     Timestamp = now_time(),
     Count = length(Requests),
     case shackle_pool:server(PoolName, Count) of
@@ -385,7 +396,6 @@ batch_cast(PoolName, Requests, Pid, Timeout) when is_list(Requests) ->
             {Casts, RequestRefs} = lists:unzip(CastsRequestRefs),
             try
                 Server ! {request, [Casts, Requests, Count]},
-                observe_cast_metric(Client, PoolName, Count),
                 {ok, {BatchRef, Count, RequestRefs}}
             catch error:badarg ->
                 {error, {bad_server, Server}}
@@ -740,14 +750,9 @@ timeout({at, StoptimeMs}) ->
             0
     end.
 
--doc """
-Emit observability event for cast metrics Sends observability metric event for
-cast operations. The 'client' metadata maps to the prometheus 'client' label,
-maintaining compatibility with original shackle_metrics definitions.
-""".
-observe_cast_metric(Client, Pool, Count) ->
-    shackle_observe:event([shackle, metric, counter], #{count => Count}, #{
-        metric => shackle_cast_total,
-        client => Client,
-        pool   => Pool
-    }).
+%% Helper to get pool client name, falling back to unknown if pool not found
+get_pool_client(PoolName) ->
+    case shackle_pool:client(PoolName) of
+        {ok, Client} -> Client;
+        {error, _} -> unknown
+    end.

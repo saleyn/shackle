@@ -9,29 +9,29 @@ Returned by `shackle_observe:dispatcher/0` when `enabled/0` is true.
 """.
 
 -export([
-    call/2,
-    cast/2,
-    connect/2,
-    timeout/2,
-    error/2
+    call/3,
+    cast/3,
+    connect/3,
+    timeout/3,
+    error/3
 ]).
 
--spec call(atom(), fun(() -> Result)) -> Result when Result :: term().
-call(PoolName, Fun) ->
-    shackle_observe:span([call], #{pool => PoolName}, Fun).
+-spec call(atom(), atom(), fun(() -> Result)) -> Result when Result :: term().
+call(PoolName, ClientName, Fun) ->
+    shackle_observe:span([call], #{pool => PoolName, client => ClientName}, Fun).
 
--spec cast(atom(), fun(() -> Result)) -> Result when Result :: term().
-cast(PoolName, Fun) ->
-    shackle_observe:span([cast], #{pool => PoolName}, Fun).
+-spec cast(atom(), atom(), fun(() -> Result)) -> Result when Result :: term().
+cast(PoolName, ClientName, Fun) ->
+    shackle_observe:span([cast], #{pool => PoolName, client => ClientName}, Fun).
 
--spec connect(atom(), fun(() -> Result)) -> Result when Result :: term().
-connect(PoolName, Fun) ->
-    shackle_observe:span([connect], #{pool => PoolName}, Fun).
+-spec connect(atom(), atom(), fun(() -> Result)) -> Result when Result :: term().
+connect(PoolName, ClientName, Fun) ->
+    shackle_observe:span([connect], #{pool => PoolName, client => ClientName}, Fun).
 
--spec timeout(atom(), fun(() -> Result)) -> Result when Result :: term().
-timeout(PoolName, Fun) ->
-    shackle_observe:span([timeout], #{pool => PoolName}, Fun).
+-spec timeout(atom(), atom(), fun(() -> Result)) -> Result when Result :: term().
+timeout(PoolName, ClientName, Fun) ->
+    shackle_observe:span([timeout], #{pool => PoolName, client => ClientName}, Fun).
 
--spec error(atom(), fun(() -> Result)) -> Result when Result :: term().
-error(PoolName, Fun) ->
-    shackle_observe:span([error], #{pool => PoolName}, Fun).
+-spec error(atom(), atom(), fun(() -> Result)) -> Result when Result :: term().
+error(PoolName, ClientName, Fun) ->
+    shackle_observe:span([error], #{pool => PoolName, client => ClientName}, Fun).

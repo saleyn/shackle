@@ -21,6 +21,7 @@
     active_any/1,
     status/1,
     server_name/2,
+    client/1,
     options/1
 ]).
 
@@ -247,6 +248,17 @@ options(Name) ->
     catch
         error:undef ->
             {error, shackle_not_started}
+    end.
+
+-doc "Get the client module for a pool.".
+-spec client(atom()) ->
+    {ok, shackle:client()} | {error, pool_not_started | shackle_not_started}.
+client(Name) ->
+    case options(Name) of
+        {ok, #pool_options{client = Client}} ->
+            {ok, Client};
+        {error, Reason} ->
+            {error, Reason}
     end.
 
 options_rec(Client, Options) ->

@@ -19,17 +19,13 @@ compile:
 	@echo "Running rebar3 compile..."
 	@$(REBAR3) as compile compile
 
-dialyzer:
-	@echo "Running rebar3 dialyze..."
-	@$(REBAR3) dialyzer
+doc:
+	@echo "Running rebar3 ex_doc..."
+	@$(REBAR3) ex_doc
 
-edoc:
-	@echo "Running rebar3 edoc..."
-	@$(REBAR3) as edoc edoc
-
-lint elvis:
-	@echo "Running lint..."
-	@$(REBAR3) lint
+lint elvis xref dialyzer:
+	@echo "Running $@..."
+	@$(REBAR3) as lint $@
 
 eunit:
 	@echo "Running rebar3 eunit..."
@@ -44,8 +40,4 @@ profile:
 
 test: lint xref eunit dialyzer
 
-xref:
-	@echo "Running rebar3 xref..."
-	@$(REBAR3) xref
-
-.PHONY: bench clean compile dialyzer edoc lint elvis eunit profile xref
+.PHONY: bench clean compile dialyzer doc lint elvis eunit profile xref

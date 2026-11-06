@@ -5,7 +5,8 @@
 -define(DEFAULT_BOUNCE_UDP, false).
 -define(DEFAULT_INIT_OPTS, undefined).
 -define(DEFAULT_CONNECT_TIMEOUT, 500).
--define(DEFAULT_MAX_RETRIES, 0).
+-define(DEFAULT_MAX_REQUESTS, infinity).
+-define(DEFAULT_MAX_RETRIES, 3).
 -define(DEFAULT_MIN_TIMEOUT, 0).
 -define(DEFAULT_POOL_SIZE, 16).
 -define(DEFAULT_POOL_STRATEGY, random).

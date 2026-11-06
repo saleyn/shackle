@@ -1,9 +1,6 @@
 -module(shackle_utils).
 -include("shackle_internal.hrl").
 
--compile(inline).
--compile({inline_size, 512}).
-
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
@@ -90,8 +87,10 @@ random_element(L) when is_list(L) ->
 warning_msg(Pool, Format, Data) ->
     ?WARN(Pool, Format, Data).
 
-%% @doc List sockets grouped by peer address/port, in the descending order of count
-%% This function is mainly used for debugging.
+-doc """
+List sockets grouped by peer address/port, in the descending order of count This
+function is mainly used for debugging.
+""".
 -spec list_peers() -> [{integer(), binary()}].
 list_peers() ->
     Endpoints = lists:filtermap(fun(S) ->
@@ -150,15 +149,19 @@ port_list(Name) ->
             end
         end, erlang:ports()).
 
-%% @doc Function used for troubleshooting shackle bounce event feature.
-%% It can be set in configuration
-%% `{shackle, [{on_bounce_event, {shackle_utils, on_bounce_event}}]}'.
+-doc """
+Function used for troubleshooting shackle bounce event feature. It can be set in
+configuration `{shackle, [{on_bounce_event, {shackle_utils,
+on_bounce_event}}]}`.
+""".
 -spec on_bounce_event(atom(), integer(), map()) -> ok.
 on_bounce_event(Pool, SrvIdx, Event) ->
     ?LOG_INFO("[~p:~w] shackle bounce event: ~p", [Pool, SrvIdx, Event]).
 
-%% @doc Return global shackle options that get overriden by `Options' that are
-%% provided by a shackle client library upon startup of a client or pool.
+-doc """
+Return global shackle options that get overriden by `Options` that are provided
+by a shackle client library upon startup of a client or pool.
+""".
 -spec default_options(client|pool, map()|[{atom(), any()}]) -> [{atom(), any()}].
 default_options(Node, Options) when Node==pool; Node==client ->
     DefOptions = ?GET_ENV(Node, []),
@@ -169,90 +172,94 @@ default_options(Node, Options) when Node==pool; Node==client ->
 merge_options(AppShackleOptions) ->
     merge_options(application:get_application(), to_map(AppShackleOptions), #{}).
 
-%% @doc Shackle clients can use this function to merge their provided
-%% options for a shackle client and pool with the global shackle options
-%% defined in the `shackle' application.  The global options are overriden
-%% by the client options passed to this function. If a client provides an
-%% option `{Option, Value}' in the `Options' list with the value equal to
-%% the default value for that option in shackle, and shackle defines a global
-%% value different from this default, then the global value will be used.
-%%
-%% The function will throw exception if the any of the `shackle' option names
-%% are invalid or any option value has a wrong type.
-%%
-%% ===Example===
-%% Given the call `shackle_utils:merge_options(barker, [{pool_size, 3}])':
-%%
-%% 1. In this config `pool_size = 2' will be used because 16 is the default for
-%% the pool size:
-%% ```
-%% [{shackle, [{pool, [{pool_size, 2}]}]}].
-%% '''
-%%
-%% 2. In this config `pool_size = 4' will be used, because it's defined in the
-%% `barker' application's top-level config:
-%% ```
-%% [
-%%   {shackle, [{pool, [{pool_size, 2}]}]},
-%%   {barker, [{pool_size, 4}]}
-%% ].
-%% '''
-%%
-%% 3. In this config `pool_size = 6' will be used, because it's defined in the
-%% `barker' application's top-level config, which overrides the
-%% `{barker, [{shackle, ...}]}' config:
-%% ```
-%% [
-%%   {shackle, [{pool, [{pool_size, 2}]}]},
-%%   {barker, [{shackle, [{pool, [{pool_size, 4}]}}]}]},
-%%   {barker, [{pool_size, 6}]}
-%% ].
-%% '''
-%%
-%% 4. In this config `pool_size = 4' will be used, because it's defined in the
-%% `barker' application's `shackle' config, which overrides the global `shackle'
-%% config:
-%% ```
-%% [
-%%   {shackle, [{pool, [{pool_size, 2}]}]},
-%%   {barker, [{shackle, [{pool, [{pool_size, 4}]}}]}]}
-%% ].
-%%
-%% 5. In this config `pool_size = 2' will be used, because it's defined in the
-%% the global `shackle' config:
-%% ```
-%% [
-%%   {shackle, [{pool, [{pool_size, 2}]}]}
-%% ].
-%% '''
-%%
-%% 6. In this case the `pool_size = 3' value is derived from the default
-%% options passed to the `merge_options/2':
-%% ```
-%% [].
-%% '''
+-doc """
+Shackle clients can use this function to merge their provided options for a
+shackle client and pool with the global shackle options defined in the `shackle`
+application.  The global options are overriden by the client options passed to
+this function. If a client provides an option `{Option, Value}` in the `Options`
+list with the value equal to the default value for that option in shackle, and
+shackle defines a global value different from this default, then the global
+value will be used.
+
+The function will throw exception if the any of the `shackle` option names are
+invalid or any option value has a wrong type.
+
+## Example:
+
+Given the call `shackle_utils:merge_options(barker, [{pool_size,
+3}])`:
+
+1. In this config `pool_size = 2` will be used because 16 is the default for the
+pool size:
+```
+[{shackle, [{pool, [{pool_size, 2}]}]}].
+```
+
+2. In this config `pool_size = 4` will be used, because it's defined in the
+`barker` application's top-level config:
+```
+[
+  {shackle, [{pool, [{pool_size, 2}]}]},
+  {barker, [{pool_size, 4}]}
+].
+```
+
+3. In this config `pool_size = 6` will be used, because it's defined in the
+`barker` application's top-level config, which overrides the `{barker,
+[{shackle, ...}]}` config:
+```
+[
+  {shackle, [{pool, [{pool_size, 2}]}]},
+  {barker, [{shackle, [{pool, [{pool_size, 4}]}}]}]},
+  {barker, [{pool_size, 6}]}
+].
+```
+
+4. In this config `pool_size = 4` will be used, because it's defined in the
+`barker` application's `shackle` config, which overrides the global `shackle`
+config:
+```
+[
+  {shackle, [{pool, [{pool_size, 2}]}]},
+  {barker, [{shackle, [{pool, [{pool_size, 4}]}}]}]}
+].
+```
+
+5. In this config `pool_size = 2` will be used, because it's defined in the
+the global `shackle` config:
+```
+[ {shackle, [{pool, [{pool_size, 2}]}]} ].
+```
+
+6. In this case the `pool_size = 3` value is derived from the default
+options passed to the `merge_options/2`: `[].` (derived as default when
+merge_options is called with DefaultOpts=[pool_size=3])
+""".
 -spec merge_options(atom(), [{atom(), any()}] | map()) ->
     {[{atom(), any()}], [{atom(), any()}]}.
 merge_options(App, DefaultOpts) when is_atom(App) ->
     merge_options(App, to_map(DefaultOpts), #{}).
 
-%% @doc Same as `merge_options/2', but also allows to map option key names.
-%%
-%% The `KeyMap' argument allows the client to define key mapping between
-%% the shackle configuration options and the configuration key names in client
-%% environment.
-%%
-%% Example:
-%% ```
-%% Config:
-%% [
-%%   {shackle, [{pool, [{pool_size, 2}]}]},
-%%   {barker, [{barker_pool_size, 4}]}
-%% ].
-%%
-%% shackle_utils:merge_options(barker, [{pool_size, 3}],
-%%     #{pool_size => barker_pool_size})     % Returns 4
-%% '''
+-doc """
+Same as `merge_options/2`, but also allows to map option key names.
+
+The `KeyMap` argument allows the client to define key mapping between the
+shackle configuration options and the configuration key names in client
+environment.
+
+## Example:
+
+```
+Config:
+[
+  {shackle, [{pool, [{pool_size, 2}]}]},
+  {barker, [{barker_pool_size, 4}]}
+].
+
+shackle_utils:merge_options(barker, [{pool_size, 3}],
+    #{pool_size => barker_pool_size})     % Returns 4
+```
+""".
 -spec merge_options(atom() | [{atom(), any()}] | map(), [{atom(), any()}] | map(), #{atom() => atom()}) ->
     {[{atom(), any()}], [{atom(), any()}]}.
 merge_options(App, DefaultOpts, KeyMap) when is_atom(App) ->
@@ -311,7 +318,9 @@ merge_options(AppEnv, Defaults, KeyMap) when
     ]),
     ClientConfig = lists:foldl(F, [], [
         {ip, {client, ?DEFAULT_ADDRESS}},
+        {address, {client, undefined}},
         {port, {client, 0}},
+        {servers, {client, undefined}},
         {protocol, {client, ?DEFAULT_PROTOCOL}},
         {service_name, {client, undefined}},
         {reconnect, {client, ?DEFAULT_RECONNECT}},
@@ -320,6 +329,7 @@ merge_options(AppEnv, Defaults, KeyMap) when
         {socket_options, {client, ?DEFAULT_SOCKET_OPTS}},
         {bounce_interval_secs, {client, ?DEFAULT_BOUNCE_INTERVAL}},
         {bounce_udp, {client, ?DEFAULT_BOUNCE_UDP}},
+        {max_requests, {client, ?DEFAULT_MAX_REQUESTS}},
         {on_bounce_event, {client, undefined}}
     ]),
     validate_options(PoolConfig),
@@ -340,12 +350,19 @@ validate([{max_retries, V} | T]) when is_integer(V) -> validate(T);
 validate([{pool_size, V} | T]) when is_integer(V) -> validate(T);
 validate([{pool_strategy, random} | T]) -> validate(T);
 validate([{pool_strategy, round_robin} | T]) -> validate(T);
+validate([{pool_strategy, power_of_two} | T]) -> validate(T);
+validate([{pool_strategy, least_connections} | T]) -> validate(T);
+validate([{pool_strategy, random_without_replacement} | T]) -> validate(T);
+validate([{pool_strategy, consistent_hash} | T]) -> validate(T);
 validate([{ip, V} | T]) when is_list(V); is_tuple(V) -> validate(T);
 validate([{address, V} | T]) when is_list(V); is_tuple(V) -> validate(T);
 validate([{port, V} | T]) when is_integer(V) -> validate(T);
+validate([{servers, V} | T]) when is_list(V) -> validate(T);
 validate([{protocol, shackle_tcp} | T]) -> validate(T);
 validate([{protocol, shackle_udp} | T]) -> validate(T);
 validate([{protocol, shackle_ssl} | T]) -> validate(T);
+validate([{protocol, shackle_socket} | T]) -> validate(T);
+validate([{protocol, shackle_ssl_socket} | T]) -> validate(T);
 validate([{service_name, V} | T]) when is_atom(V); is_binary(V); is_list(V) -> validate(T);
 validate([{reconnect, V} | T]) when is_boolean(V) -> validate(T);
 validate([{reconnect_time_max, V} | T]) when is_integer(V), V >= 0 -> validate(T);
@@ -354,6 +371,8 @@ validate([{socket_options, V} | T]) when is_list(V) -> validate(T);
 validate([{bounce_interval_secs, V} | T]) when is_integer(V) -> validate(T);
 validate([{bounce_interval_secs, infinity} | T]) -> validate(T);
 validate([{bounce_udp, V} | T]) when is_boolean(V) -> validate(T);
+validate([{max_requests, V} | T]) when is_integer(V), V > 0 -> validate(T);
+validate([{max_requests, infinity} | T]) -> validate(T);
 validate([{on_bounce_event, {M,F}} | T]) when is_atom(M), is_atom(F) -> validate(T);
 validate([{on_bounce_event, V} | T]) when is_function(V, 3) -> validate(T);
 validate([{on_bounce_event, undefined} | T]) -> validate(T);

@@ -1,6 +1,6 @@
 {application, shackle, [
-  {applications, [kernel, stdlib, metal, foil, erlsem, ssl, prometheus]},
-  {description, "High-Performance Erlang Network Client Framework"},
+  {applications, [kernel, stdlib, metal, foil, erlsem, ssl]},
+  {description, "High-Performance Connection Pooling Framework"},
   {env, []},
   {licenses, ["MIT"]},
   {links, [{"GitHub", "https://github.com/lpgauth/shackle"}]},

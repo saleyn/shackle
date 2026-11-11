@@ -412,8 +412,8 @@ DNS caching provides significant performance improvements:
 ## Compatibility
 
 ### Supported Erlang Versions
-- OTP 19.0+ (uses `inet:parse_address/1` and `inet:getaddrs/2`)
-- OTP 28+ recommended for best performance
+- **OTP 28+** (required; provides `shackle_socket` with the native socket NIF backend)
+- Uses `inet:parse_address/1` and `inet:getaddrs/2` for DNS resolution
 
 ### Network Support
 - **IPv4**: Full support

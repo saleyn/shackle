@@ -4,10 +4,12 @@
     client        :: shackle:client(),
     max_retries   :: max_retries(),
     pool_size     :: pool_size(),
-    pool_strategy :: pool_strategy()
+    pool_strategy :: pool_strategy(),
+    hash_fn       :: phash2 | fun((term()) -> non_neg_integer())
 }).
 
 %% types
+-type hash_fn() :: phash2 | fun((term()) -> non_neg_integer()).
 -type max_retries() :: non_neg_integer().
 -type name() :: atom().
 -type pool_size() :: pos_integer().
@@ -19,6 +21,7 @@
                          consistent_hash.
 -type pool_options() :: #pool_options{}.
 -type option() :: {backlog_size, shackle_backlog:backlog_size()} |
+                  {hash_fn, hash_fn()} |
                   {max_retries, max_retries()} |
                   {pool_size, pool_size()} |
                   {pool_strategy, pool_strategy()}.

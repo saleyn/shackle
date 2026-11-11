@@ -10,7 +10,7 @@
 
 % protocol stubs
 
-connect(_Ip, fake_port, _SockOpts) -> {ok, fake_socket}.
+connect(_Ip, 4242, _SockOpts) -> {ok, fake_socket}.
 
 setopts(fake_socket, _SockOpts) -> ok.
 
@@ -37,7 +37,7 @@ setup() ->
     error_logger:tty(false),
     Cleanup = shackle_test_utils:with_prometheus(),
     shackle_app:start(),
-    shackle_pool:start(simple, ?MODULE, [{protocol, ?MODULE}, {port, fake_port}], [{pool_size, 1}]),
+    shackle_pool:start(simple, ?MODULE, [{protocol, ?MODULE}, {port, 4242}], [{pool_size, 1}]),
     true = shackle_pool:wait_until_all_available(simple, 100),
     Cleanup.
 

@@ -295,6 +295,44 @@ DNS resolution results are cached (5-minute TTL) and hostnames resolving to mult
 
 Existing single-server configurations (`{address, Host}` + `{port, Port}`) continue to work unchanged.
 
+#### Multi-server failover
+
+_These features were copied from the [Arterial](https://github.com/saleyn/arterial) project._
+
+Shackle supports multiple server addresses for automatic failover and high availability. When a connection to one server fails, the client automatically tries the next server in the list.
+
+```erlang
+%% Multiple servers with shared port
+shackle_pool:start(my_pool, my_client, [
+    {port, 9000},
+    {servers, [
+        "server1.example.com",
+        "server2.example.com",
+        "server3.example.com"
+    ]}
+], []).
+
+%% Per-server ports
+shackle_pool:start(my_pool, my_client, [
+    {port, 9000},
+    {servers, [
+        "server1.example.com",          % Uses default port 9000
+        {"server2.example.com", 9001},  % Overrides with port 9001
+        {"server3.example.com", 9002}
+    ]}
+], []).
+```
+
+Failover behavior:
+
+1. The client tries the current server with full retry logic (respecting `max_retries`)
+2. On failure, moves to the next server in the list
+3. After all servers are exhausted, applies exponential backoff and retries from the first server
+
+DNS resolution results are cached (5-minute TTL) and hostnames resolving to multiple IPs get random selection per connection attempt. Kubernetes service names are automatically detected and resolved using cluster DNS search domains.
+
+Existing single-server configurations (`{address, Host}` + `{port, Port}`) continue to work unchanged.
+
 #### Calling / Casting client
 
 ```erlang
@@ -439,6 +477,14 @@ make profile
 | [flare](https://github.com/lpgauth/flare) | Kafka Producer |
 | [marina](https://github.com/lpgauth/marina) | Cassandra CQL Client |
 | [statsderl](https://github.com/lpgauth/statsderl) | StatsD Client |
+
+## Advanced Features
+
+For more advanced features, check out the following documentation:
+
+- [Multi-Server Support](multi-server.md) - Automatic failover and high availability with multiple server addresses
+- [DNS Resolution](dns-resolution.md) - Enhanced hostname resolution with caching and Kubernetes service discovery
+- [Observability](observability.md) - Monitoring and observability features
 
 ## Advanced Features
 

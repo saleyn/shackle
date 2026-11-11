@@ -1,18 +1,19 @@
 -module(shackle_ssl_socket).
 -moduledoc """
-TLS socket protocol over ssl:connect/4.
+TLS over the OTP socket module (OTP 28+).
 
-TLS over the socket NIF: connect/3 opens and connects a raw
-socket:socket(), applies the inet-level options to it, then hands
-it to ssl:connect/3, which selects the tls_socket_tcp transport
-for {'$socket', _} sockets. That transport lands in OTP 28.0
-(send-side buffering in 28.1, recommended) and the ssl specs
-before 28 don't accept socket:socket(), so OTP 28 is the runtime
-floor for this protocol.
+The TCP socket is opened with `socket:open/3`. Socket-level options (for example
+`nodelay`, `keepalive`, buffer sizes) are applied with `socket:setopt/3`. All other
+options (TLS options, `binary`, `packet`, ...) are passed to `ssl:connect/3`, which
+runs the handshake on the connected socket.
+
+`shackle_ssl` uses `ssl:connect/4` with the gen_tcp transport and works on older
+OTP releases. Use this module only when the socket NIF is wanted.
+
+`{inet_backend, _}` is rejected: this module already uses the socket module. To run
+TLS over the socket NIF through `ssl`, use `shackle_ssl` with `{inet_backend, socket}`.
 """.
 -include("shackle_defaults.hrl").
-
--dialyzer({nowarn_function, [connect/3, error_reason/1, handshake/3]}).
 
 -behavior(shackle_protocol).
 -export([
@@ -22,106 +23,79 @@ floor for this protocol.
     setopts/2
 ]).
 
-%% callbacks
--spec close(shackle:socket()) ->
-    ok.
-
+-spec close(shackle:socket()) -> ok.
 close(Socket) ->
     ssl:close(Socket),
     ok.
 
 -spec connect(shackle:inet_address(), shackle:inet_port(), shackle:socket_options()) ->
     {ok, shackle:socket()} | {error, atom()}.
-
 connect(Address, Port, SocketOptions) ->
-    Timestamp = erlang:monotonic_time(millisecond),
-    case socket:open(inet, stream, tcp) of
-        {ok, Socket} ->
-            case connect_opts(Socket, SocketOptions, []) of
-                {ok, SslOptions} ->
-                    SockAddr = #{
-                        family => inet,
-                        addr => Address,
-                        port => Port
-                    },
-                    case socket:connect(Socket, SockAddr,
-                        ?DEFAULT_CONNECT_TIMEOUT) of
+    case lists:keyfind(inet_backend, 1, SocketOptions) of
+        false -> do_connect(Address, Port, SocketOptions);
+        InetBackend -> {error, {unsupported_option, InetBackend}}
+    end.
 
+do_connect(Address, Port, SocketOptions) ->
+    Timestamp = erlang:monotonic_time(millisecond),
+    Family = family(Address),
+    case socket:open(Family, stream, tcp) of
+        {ok, Socket} ->
+            case apply_options(Socket, SocketOptions) of
+                {ok, TlsOptions} ->
+                    SockAddr = #{family => Family, addr => Address, port => Port},
+                    case socket:connect(Socket, SockAddr, ?DEFAULT_CONNECT_TIMEOUT) of
                         ok ->
-                            handshake(Socket, SslOptions, Timestamp);
+                            handshake(Socket, TlsOptions, Timestamp);
                         {error, Reason} ->
-                            _ = socket:close(Socket),
+                            close_socket(Socket),
                             {error, Reason}
                     end;
                 {error, Reason} ->
-                    _ = socket:close(Socket),
+                    close_socket(Socket),
                     {error, Reason}
             end;
         {error, _} = Error ->
             Error
     end.
 
--spec send(shackle:socket(), iodata()) ->
-    ok | {error, atom()}.
-
+-spec send(shackle:socket(), iodata()) -> ok | {error, atom()}.
 send(Socket, Data) ->
     ssl:send(Socket, Data).
 
--spec setopts(shackle:socket(), [gen_tcp:option()]) ->
-    ok |
-    {error, atom()}.
-
+-spec setopts(shackle:socket(), [gen_tcp:option()]) -> ok | {error, atom()}.
 setopts(Socket, Opts) ->
     ssl:setopts(Socket, Opts).
 
 %% private
-%% nodelay/recbuf/sndbuf are applied to the raw socket before the
-%% handshake; everything else (mode, packet, tls options) goes to
-%% ssl:connect, which emulates the inet options.
-connect_opts(_Socket, [], Acc) ->
-    {ok, lists:reverse(Acc)};
-connect_opts(Socket, [{nodelay, Bool} | T], Acc) ->
-    case socket:setopt(Socket, {tcp, nodelay}, Bool) of
-        ok ->
-            connect_opts(Socket, T, Acc);
-        {error, _} = Error ->
-            Error
-    end;
-connect_opts(Socket, [{recbuf, Size} | T], Acc) ->
-    case socket:setopt(Socket, {socket, rcvbuf}, Size) of
-        ok ->
-            connect_opts(Socket, T, Acc);
-        {error, _} = Error ->
-            Error
-    end;
-connect_opts(Socket, [{sndbuf, Size} | T], Acc) ->
-    case socket:setopt(Socket, {socket, sndbuf}, Size) of
-        ok ->
-            connect_opts(Socket, T, Acc);
-        {error, _} = Error ->
-            Error
-    end;
-connect_opts(Socket, [Opt | T], Acc) ->
-    connect_opts(Socket, T, [Opt | Acc]).
 
-error_reason(Reason) when is_atom(Reason) ->
-    Reason;
-error_reason({tls_alert, {Alert, _Description}}) ->
-    Alert;
-error_reason({options, _}) ->
-    invalid_options;
-error_reason(_) ->
-    ssl_error.
+family(Address) when tuple_size(Address) =:= 8 -> inet6;
+family(_Address) -> inet.
 
-%% The remaining connect budget goes to the handshake so a backend
-%% swap from shackle_ssl keeps the same total connect deadline.
-handshake(Socket, SslOptions, Timestamp) ->
+%% Socket-level options are applied by shackle_socket, which shares the table.
+%% The rest are TLS options (and binary/packet/active), kept in order for ssl.
+apply_options(Socket, Options) ->
+    shackle_socket:apply_socket_options(Socket, Options).
+
+%% The remaining connect budget goes to the handshake, so the total connect
+%% deadline matches shackle_ssl.
+handshake(Socket, TlsOptions, Timestamp) ->
     Elapsed = erlang:monotonic_time(millisecond) - Timestamp,
     Timeout = max(?DEFAULT_CONNECT_TIMEOUT - Elapsed, 1),
-    case ssl:connect(Socket, SslOptions, Timeout) of
+    %% ssl:connect/3 on a socket handle defaults to active false, unlike
+    %% ssl:connect/4, which shackle_ssl uses. Match shackle_ssl unless the caller says otherwise.
+    Options = case lists:keymember(active, 1, TlsOptions) of
+        true -> TlsOptions;
+        false -> [{active, true} | TlsOptions]
+    end,
+    case ssl:connect(Socket, Options, Timeout) of
         {ok, SslSocket} ->
             {ok, SslSocket};
         {error, Reason} ->
-            _ = socket:close(Socket),
-            {error, error_reason(Reason)}
+            close_socket(Socket),
+            {error, Reason}
     end.
+
+close_socket(Socket) ->
+    socket:close(Socket),
+    ok.

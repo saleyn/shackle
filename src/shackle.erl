@@ -112,8 +112,7 @@ call(PoolName, Request, Options) when is_map(Options) ->
     case shackle_pool:options(PoolName) of
         {ok, #pool_options{client = Client} = PoolOpts} ->
             Fun = fun() -> call_impl(PoolOpts, Request, Options) end,
-            Dispatcher = shackle_observe:dispatcher(),
-            Dispatcher:call(PoolName, Client, Fun);
+            shackle_observe:span([call], #{pool => PoolName, client => Client}, Fun);
         {error, Reason} ->
             {error, Reason}
     end;
@@ -218,10 +217,8 @@ cast(PoolName, Request, Pid, Options) when is_map(Options) ->
     Timestamp = now_time(),
     case shackle_pool:options(PoolName) of
         {ok, #pool_options{client = Client} = PoolOpts} ->
-            Dispatcher = shackle_observe:dispatcher(),
-            Dispatcher:cast(PoolName, Client, fun() ->
-                cast_impl(PoolOpts, Request, Pid, Timestamp, Options)
-            end);
+            Fun = fun() -> cast_impl(PoolOpts, Request, Pid, Timestamp, Options) end,
+            shackle_observe:span([cast], #{pool => PoolName, client => Client}, Fun);
         {error, Reason} ->
             {error, Reason}
     end;
@@ -237,6 +234,10 @@ cast_impl(PoolOpts, Request, Pid, Timestamp, Options) ->
             Cast = mk_cast(Client, Server, Pid, Sema, Timestamp, Options),
             try
                 Server ! {request, [Cast, Request]},
+                %% Counted here, once per message actually sent, for both calls and casts.
+                shackle_observe:event([cast, sent], #{},
+                                      #{pool => PoolOpts#pool_options.name,
+                                        client => PoolOpts#pool_options.client}),
                 {ok, Cast#cast.request_id}
             catch error:badarg ->
                 {error, {bad_server, Server}}

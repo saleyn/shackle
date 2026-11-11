@@ -18,7 +18,11 @@ shackle_request_total_test() ->
     ok = shackle_observe:event([call, stop], #{}, Metadata),
 
     History = meck:history(prometheus_counter),
-    Calls = [C || {_, {prometheus_counter, inc, [shackle_request_total, _, _]}, _} = C <- History],
+    %% Only this process's calls: pools left running by other suites now emit
+    %% metrics by default and would also appear in the mock history.
+    Self = self(),
+    Calls = [C || {Pid, {prometheus_counter, inc, [shackle_request_total, _, _]}, _} = C <- History,
+                  Pid == Self],
 
     shackle_test_utils:cleanup_mocks(Cleanup),
     ?assertEqual([], Calls).
@@ -31,10 +35,12 @@ shackle_cast_total_test() ->
     Pool = <<"pool1">>,
     Metadata = #{pool => Pool, client => Client},
 
-    ok = shackle_observe:event([cast, stop], #{}, Metadata),
+    ok = shackle_observe:event([cast, sent], #{}, Metadata),
 
     History = meck:history(prometheus_counter),
-    Calls = [C || {_, {prometheus_counter, inc, [shackle_cast_total, [_Client, _Pool], 1]}, _} = C <- History],
+    Self = self(),
+    Calls = [C || {Pid, {prometheus_counter, inc, [shackle_cast_total, [_Client, _Pool], 1]}, _} = C <- History,
+                  Pid == Self],
 
     shackle_test_utils:cleanup_mocks(Cleanup),
     ?assertEqual(1, length(Calls)).
@@ -60,8 +66,9 @@ shackle_error_total_exception_test() ->
 
 init_prometheus() ->
     OldVal = application:get_env(shackle, observability),
-    persistent_term:erase(shackle_observe),
     application:set_env(shackle, observability, prometheus),
     Cleanup = shackle_test_utils:with_prometheus([{shackle, observability, OldVal}]),
     ok = shackle_observe_prometheus:start(),
+    %% What shackle_observe:init/1 does once the backend has started
+    persistent_term:put(shackle_observe, shackle_observe_prometheus),
     [fun() -> persistent_term:erase(shackle_observe) end | Cleanup].

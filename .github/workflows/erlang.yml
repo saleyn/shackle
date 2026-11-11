@@ -2,9 +2,7 @@ name: Erlang CI
 on: [push]
 jobs:
   build:
-    runs-on:
-      group: SelfHostedDefault
-      labels: ubuntu-22.04-large
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         erlang: [28, 29]

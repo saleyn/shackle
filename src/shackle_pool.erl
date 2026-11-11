@@ -13,6 +13,8 @@ Implements various server selection strategies for load balancing and connection
 - **least_connections**: Scans all connections, picks the minimum-loaded (O(n), optimal)
 - **random_without_replacement**: Random permutation; retries never repeat server (O(n))
 - **consistent_hash**: Hash-based selection for deterministic routing (O(1))
+  - Uses `erlang:phash2/2` by default
+  - Customize with `{hash_fn, Fun}` where Fun is `fun((term()) -> non_neg_integer())` or `{Module, Function}`
 
 ## Examples
 
@@ -34,6 +36,30 @@ shackle_pool:start(my_pool, my_client, ClientOpts,
     [{pool_strategy, random_without_replacement}, {max_retries, 5}]).
 ```
 
+Use consistent_hash with custom hash function:
+```erlang
+% With lambda
+shackle_pool:start(my_pool, my_client, ClientOpts,
+    [{pool_strategy, consistent_hash},
+     {hash_fn, fun(Key) -> erlang:phash2(Key, 65537) end}]).
+
+% With module function
+shackle_pool:start(my_pool, my_client, ClientOpts,
+    [{pool_strategy, consistent_hash},
+     {hash_fn, {my_hash_module, compute_hash}}]).
+```
+
+## Customizing consistent_hash
+
+The `consistent_hash` strategy supports custom hash functions via the `hash_fn` option:
+
+- **Default:** `erlang:phash2/2` — fast, non-cryptographic hash
+- **Custom lambda:** `{hash_fn, fun(Key) -> integer() end}` — evaluated at pool startup
+- **Module function:** `{hash_fn, {Module, Function}}` — validates function exists at startup
+
+Custom hash functions must return non-negative integers. This enables alternative hashing schemes
+(e.g., consistent hashing rings, distributed hash tables, or application-specific routing logic).
+
 ## Performance
 
 | Strategy | Time | Space | Best For |
@@ -51,10 +77,15 @@ See README.md for detailed strategy documentation.
 
 %% Key of the per-request server permutation used by random_without_replacement
 -define(PERMUTATION_KEY, '$shackle_permutation').
+
+%% Consistent-hash probing offset: when a request's primary server (determined by hash key)
+%% is unavailable, retries increment this offset to probe the next server in the ring
+%% without losing key affinity. Example: hash(key) % pool_size gives primary,
+%% (hash(key) + offset) % pool_size gives fallback. Maintains session locality while
+%% gracefully degrading to nearby servers on primary failure.
 -define(PROBE_OFFSET_KEY, '$shackle_probe_offset').
 
--dialyzer({nowarn_function, options/1}).
--dialyzer({nowarn_function, server/3}).
+-dialyzer({nowarn_function, [options/1, server/3]}).
 -ignore_xref([
     {shackle_pool_foil, lookup, 1}
 ]).
@@ -81,6 +112,7 @@ See README.md for detailed strategy documentation.
     init/0,
     server/1,
     server/2,
+    server/3,
     terminate/0
 ]).
 
@@ -165,6 +197,11 @@ start(Name, Client, ClientOptions, Options) ->
 
 %% Load-aware strategies read their load from the backlog semaphores, which do not
 %% exist when backlog_size is infinity, so they would always see load 0.
+validate_strategy(#pool_options{pool_strategy = Strategy})
+  when Strategy =/= random, Strategy =/= round_robin, Strategy =/= power_of_two,
+       Strategy =/= least_connections, Strategy =/= random_without_replacement,
+       Strategy =/= consistent_hash ->
+    error({invalid_pool_strategy, Strategy});
 validate_strategy(#pool_options{backlog_size = infinity, pool_strategy = Strategy})
   when Strategy == power_of_two; Strategy == least_connections ->
     error({incompatible_pool_options, {pool_strategy, Strategy}, {backlog_size, infinity}});
@@ -357,31 +394,37 @@ options_rec(PoolName, Client, Options) ->
     MaxRetries = ?LOOKUP(max_retries, Options1, ?DEFAULT_MAX_RETRIES),
     PoolSize = ?LOOKUP(pool_size, Options1, ?DEFAULT_POOL_SIZE),
     PoolStrategy = ?LOOKUP(pool_strategy, Options1, ?DEFAULT_POOL_STRATEGY),
+    HashFn = validate_hash_fn(?LOOKUP(hash_fn, Options1, phash2)),
     #pool_options {
-        name = PoolName,
-        backlog_size = BacklogSize,
-        client = Client,
-        max_retries = MaxRetries,
-        pool_size = PoolSize,
-        pool_strategy = PoolStrategy
+        name          = PoolName,
+        backlog_size  = BacklogSize,
+        client        = Client,
+        max_retries   = MaxRetries,
+        pool_size     = PoolSize,
+        pool_strategy = PoolStrategy,
+        hash_fn       = HashFn
     }.
 
+-spec server(pool_options(), non_neg_integer(), map()) ->
+    {ok, shackle:client(), atom(), shackle_sema:sema_ref()} |
+    {error, atom()}.
 server(#pool_options{name = Name, client = Client}, 0, _CallOptions) ->
     observe_pool_metric(Client, Name, shackle_error_total, <<"no server">>),
     {error, no_server};
 server(
     #pool_options{
-        name = Name,
-        backlog_size = BacklogSize,
-        client = Client,
-        pool_size = PoolSize,
-        pool_strategy = PoolStrategy
+        name          = Name,
+        backlog_size  = BacklogSize,
+        client        = Client,
+        pool_size     = PoolSize,
+        pool_strategy = PoolStrategy,
+        hash_fn       = HashFn
     } = Options,
     N,
     CallOptions0
 ) ->
     CallOptions = init_attempts(PoolStrategy, PoolSize, CallOptions0),
-    ServerId = {Name, ServerIdx} = server_id(Name, PoolSize, PoolStrategy, CallOptions),
+    ServerId = {Name, ServerIdx} = server_id(Name, PoolSize, PoolStrategy, HashFn, CallOptions),
     case shackle_status:active(ServerId) of
         true when BacklogSize =:= infinity ->
             {ok, ServerName} = shackle_pool_foil:lookup(ServerId),
@@ -403,12 +446,18 @@ server(
 %% random_without_replacement draws one permutation per request and consumes one
 %% entry per attempt, so retries walk the pool without repeating a server until
 %% every server has been tried.
+%% The first attempt draws a single random index. The rest of the permutation is
+%% built only on the first retry (next_attempt/3), so the common case is O(1).
 init_attempts(random_without_replacement, PoolSize, CallOptions)
   when not is_map_key(?PERMUTATION_KEY, CallOptions) ->
-    CallOptions#{?PERMUTATION_KEY => shuffle_list(lists:seq(1, PoolSize))};
+    CallOptions#{?PERMUTATION_KEY => [shackle_utils:random(PoolSize)]};
 init_attempts(_PoolStrategy, _PoolSize, CallOptions) ->
     CallOptions.
 
+next_attempt(random_without_replacement, PoolSize,
+             #{?PERMUTATION_KEY := [Tried]} = CallOptions) when PoolSize > 1 ->
+    %% First retry: permute the other servers, so no server is tried twice
+    CallOptions#{?PERMUTATION_KEY := shuffle_list(lists:delete(Tried, lists:seq(1, PoolSize)))};
 next_attempt(random_without_replacement, _PoolSize,
              #{?PERMUTATION_KEY := [_ | [_ | _] = Rest]} = CallOptions) ->
     CallOptions#{?PERMUTATION_KEY := Rest};
@@ -535,16 +584,52 @@ Select a server index from the pool using the configured strategy.
 - Example: Time-based hash always routes to same server during same second
 - Enables session affinity for stateful backends
 """.
-server_id(Name, PoolSize, random, _CallOptions) ->
+
+%% Validate and return the hash function for consistent_hash strategy.
+%% Accepts: phash2 (default), {Module, Function}, or a lambda fun/1.
+validate_hash_fn(phash2) ->
+    phash2;
+validate_hash_fn({M, F}) when is_atom(M), is_atom(F) ->
+    maybe
+        {module, _} ?= code:ensure_loaded(M),
+        true        ?= erlang:function_exported(M, F, 1),
+        Res          = fun M:F/1,
+        ok          ?= case Res("some-key") of
+                           I when is_integer(I) -> ok;
+                           _ -> non_integer
+                       end,
+        Res
+    else
+        {error, _} = Error -> error(Error);
+        false              -> error({function_not_exported, {M, F, 1}});
+        non_integer        -> error({hash_fn_must_return_integer, {M, F, 1}})
+    end;
+validate_hash_fn(Fun) when is_function(Fun, 1) ->
+    case Fun("some-key") of
+        I when is_integer(I) ->
+            Fun;
+        _ ->
+            error({hash_fn_must_return_integer, Fun})
+    end;
+validate_hash_fn(Invalid) ->
+    error({invalid_hash_fn, Invalid}).
+
+%% Apply the hash function to compute a server index.
+apply_hash_fn(phash2, Key, PoolSize) ->
+    erlang:phash2(Key, PoolSize);
+apply_hash_fn(Fun, Key, _PoolSize) when is_function(Fun, 1) ->
+    Fun(Key).
+
+server_id(Name, PoolSize, random, _HashFn, _CallOptions) ->
     {Name, shackle_utils:random(PoolSize)};
 
-server_id(Name, PoolSize, round_robin, _CallOptions) ->
+server_id(Name, PoolSize, round_robin, _HashFn, _CallOptions) ->
     UpdateOps = [{2, 1, PoolSize, 1}],
     Key = {Name, round_robin},
     [ServerId] = ets:update_counter(?ETS_TABLE_POOL_INDEX, Key, UpdateOps),
     {Name, ServerId};
 
-server_id(Name, PoolSize, power_of_two, _CallOptions) ->
+server_id(Name, PoolSize, power_of_two, _HashFn, _CallOptions) ->
     %% Select 2 random servers and return the one with fewer active requests
     %% Near-optimal load balancing with O(1) cost
     Idx1 = shackle_utils:random(PoolSize),
@@ -554,7 +639,7 @@ server_id(Name, PoolSize, power_of_two, _CallOptions) ->
     SelectedIdx = if Load1 =< Load2 -> Idx1; true -> Idx2 end,
     {Name, SelectedIdx};
 
-server_id(Name, PoolSize, least_connections, _CallOptions) ->
+server_id(Name, PoolSize, least_connections, _HashFn, _CallOptions) ->
     %% Find the server with the least active requests among active servers
     %% Optimal load balancing - scans all servers once (O(n))
     %% Optimized: Find min_by_load in same pass as checking active servers
@@ -566,12 +651,12 @@ server_id(Name, PoolSize, least_connections, _CallOptions) ->
             {Name, MinServer}
     end;
 
-server_id(Name, _PoolSize, random_without_replacement, CallOptions) ->
+server_id(Name, _PoolSize, random_without_replacement, _HashFn, CallOptions) ->
     %% Head of the request's permutation (see init_attempts/3 and next_attempt/3)
     [SelectedIdx | _] = maps:get(?PERMUTATION_KEY, CallOptions),
     {Name, SelectedIdx};
 
-server_id(Name, PoolSize, consistent_hash, CallOptions) ->
+server_id(Name, PoolSize, consistent_hash, HashFn, CallOptions) ->
     %% Hash-based deterministic selection
     %% Uses caller-provided key for session affinity when available
     %% Falls back to random if no key provided (for backward compatibility)
@@ -581,10 +666,12 @@ server_id(Name, PoolSize, consistent_hash, CallOptions) ->
             %% Fallback to random when no hash key provided
             {Name, shackle_utils:random(PoolSize)};
         HashKey ->
-            %% Use provided key for deterministic routing. Retries move to the
-            %% following indexes (see next_attempt/3).
+            %% Use provided key for deterministic routing via configurable hash function.
+            %% Retries move to the following indexes (see next_attempt/3). On primary
+            %% failure, probe successive servers in the hash ring without losing affinity.
             Offset = maps:get(?PROBE_OFFSET_KEY, CallOptions, 0),
-            {Name, (erlang:phash2(HashKey, PoolSize) + Offset) rem PoolSize + 1}
+            Hash   = apply_hash_fn(HashFn, HashKey, PoolSize),
+            {Name, (Hash + Offset) rem PoolSize + 1}
     end.
 
 %% Load used to rank a sampled server in power_of_two. An inactive server ranks
@@ -676,15 +763,10 @@ find_min_load_active_server(Name, PoolSize) ->
 find_min_load_active_server(_Name, [], MinServer, _MinLoad) ->
     MinServer;
 find_min_load_active_server(Name, [I | Rest], MinServer, MinLoad) ->
-    case shackle_status:active({Name, I}) of
-        true ->
-            Load = get_server_load(Name, I),
-            if
-                Load < MinLoad -> find_min_load_active_server(Name, Rest, I, Load);
-                true           -> find_min_load_active_server(Name, Rest, MinServer, MinLoad)
-            end;
-        false ->
-            find_min_load_active_server(Name, Rest, MinServer, MinLoad)
+    %% Inactive servers rank as infinity, so they never beat the accumulator
+    case load_for_selection(Name, I) of
+        Load when Load < MinLoad -> find_min_load_active_server(Name, Rest, I, Load);
+        _ -> find_min_load_active_server(Name, Rest, MinServer, MinLoad)
     end.
 
 %%--------------------------------------------------------------------

@@ -160,6 +160,11 @@ is_valid_host(Host) when is_list(Host) ->
     is_string(Host);
 is_valid_host(Host) when is_atom(Host) ->
     true;
+is_valid_host({A, B, C, D} = IP) when is_integer(A), is_integer(B), is_integer(C), is_integer(D) ->
+    lists:all(fun(Octet) -> Octet >= 0 andalso Octet =< 255 end, tuple_to_list(IP));
+is_valid_host({A, B, C, D, E, F, G, H}) when is_integer(A), is_integer(B), is_integer(C),
+    is_integer(D), is_integer(E), is_integer(F), is_integer(G), is_integer(H) ->
+    true;
 is_valid_host(_) ->
     false.
 
@@ -294,25 +299,59 @@ is_short_name(Hostname) ->
 %% Try to resolve a short Kubernetes service name by expanding with search domains
 -spec resolve_k8s_short_name(string()) -> {ok, [inet:ip_address()]} | {error, term()}.
 resolve_k8s_short_name(ServiceName) ->
-    K8sEnvironment = detect_k8s_environment(),
+    K8sEnvironment = k8s_environment(),
     SearchDomains = build_k8s_search_domains(ServiceName, K8sEnvironment),
     try_k8s_search_domains(SearchDomains, ServiceName).
 
 %% @private
-%% Try each search domain until one resolves
+%% Try the search domains in order. The domain that resolved this name last time
+%% in this process is tried first, so a typical reconnect needs one lookup.
 -spec try_k8s_search_domains([string()], string()) -> {ok, [inet:ip_address()]} | {error, term()}.
-try_k8s_search_domains([], ServiceName) ->
+try_k8s_search_domains(SearchDomains, ServiceName) ->
+    Ordered = case get({k8s_last_domain, ServiceName}) of
+        undefined ->
+            SearchDomains;
+        Last ->
+            case lists:member(Last, SearchDomains) of
+                true -> [Last | lists:delete(Last, SearchDomains)];
+                false -> SearchDomains
+            end
+    end,
+    try_k8s_domain_list(Ordered, ServiceName).
+
+try_k8s_domain_list([], ServiceName) ->
     % All search domains failed, try the original name as fallback
-    case resolve_standard_hostname(ServiceName) of
+    case resolve_k8s_candidate(ServiceName) of
         {ok, _} = Success -> Success;
         {error, _} -> {error, {k8s_service_not_found, ServiceName}}
     end;
-try_k8s_search_domains([Domain | Rest], ServiceName) ->
+try_k8s_domain_list([Domain | Rest], ServiceName) ->
     FullName = ServiceName ++ "." ++ Domain,
-    case resolve_standard_hostname(FullName) of
-        {ok, _} = Success -> Success;
-        {error, {hostname_not_found, _}} -> try_k8s_search_domains(Rest, ServiceName);
+    case resolve_k8s_candidate(FullName) of
+        {ok, _} = Success ->
+            put({k8s_last_domain, ServiceName}, Domain),
+            Success;
+        {error, {hostname_not_found, _}} -> try_k8s_domain_list(Rest, ServiceName);
         {error, _} = OtherError -> OtherError
+    end.
+
+%% @private
+%% Resolve one candidate name. A name that was not found is remembered for a few
+%% seconds, so a burst of reconnects does not repeat the same failing lookups.
+-define(K8S_MISSING_TTL, 5).
+resolve_k8s_candidate(FullName) ->
+    Now = erlang:monotonic_time(second),
+    case get({k8s_missing, FullName}) of
+        MissedAt when is_integer(MissedAt), Now - MissedAt < ?K8S_MISSING_TTL ->
+            {error, {hostname_not_found, FullName}};
+        _ ->
+            case resolve_standard_hostname(FullName) of
+                {error, {hostname_not_found, _}} = NotFound ->
+                    put({k8s_missing, FullName}, Now),
+                    NotFound;
+                Other ->
+                    Other
+            end
     end.
 
 %% @private
@@ -385,4 +424,17 @@ get_current_namespace(external) -> "default".
 %% Check if running in Kubernetes environment
 -spec is_k8s_environment() -> boolean().
 is_k8s_environment() ->
-    detect_k8s_environment() /= external.
+    k8s_environment() /= external.
+
+%% @private
+%% The environment does not change while the node runs, so detect it once
+%% (file check and env read) instead of on every name lookup.
+k8s_environment() ->
+    case persistent_term:get({?MODULE, k8s_environment}, undefined) of
+        undefined ->
+            Env = detect_k8s_environment(),
+            persistent_term:put({?MODULE, k8s_environment}, Env),
+            Env;
+        Env ->
+            Env
+    end.

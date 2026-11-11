@@ -10,7 +10,7 @@
     event/2,
     event/3,
     enabled/0,
-    dispatcher/0
+    backend_config/1
 ]).
 
 %% gen_server callbacks
@@ -79,16 +79,6 @@ span(EventNameSuffix, StartMetadata, Fun) when is_list(EventNameSuffix), is_func
 enabled() ->
     backend() =/= nil.
 
--doc """
-Returns the dispatcher module for the current observability configuration.
-`shackle_observe_noop` when disabled; `shackle_observe_span` when enabled.
-""".
--spec dispatcher() -> shackle_observe_noop | shackle_observe_span.
-dispatcher() ->
-    case backend() of
-        nil -> shackle_observe_noop;
-        _   -> shackle_observe_span
-    end.
 
 -doc "Equivalent to `event/3` with `Measurements = #{}`".
 -spec event([atom()], map()) -> ok.
@@ -169,12 +159,18 @@ resolve_module(prometheus) -> shackle_observe_prometheus;
 resolve_module(Mod) when is_atom(Mod) -> Mod;
 resolve_module(_) -> nil.
 
-%% Maps the `observability' app env value to a backend module. Accepts the same
-%% forms as shackle_sup: `Name' or `{Name, Opts}', where Name is an atom alias
-%% (telemetry | prometheus) or a backend module.
--spec config_module(term())  -> module() | nil.
-config_module({Name, _Opts}) -> resolve_module(Name);
-config_module(Name)          -> resolve_module(Name).
+-doc """
+Parses the `observability' app env value into `{BackendModule, BackendOpts}'.
+Accepted forms: `undefined' | `nil' (disabled), `telemetry' | `prometheus' (aliases),
+a backend module, or `{Name, Opts}' with Name as above. Any other value raises
+`{invalid_observability, Value}', so a bad config stops the application at startup.
+""".
+-spec backend_config(term()) -> {module() | nil, term()}.
+backend_config(undefined) -> {nil, nil};
+backend_config(nil) -> {nil, nil};
+backend_config({Name, Opts}) when is_atom(Name) -> {resolve_module(Name), Opts};
+backend_config(Name) when is_atom(Name) -> {resolve_module(Name), nil};
+backend_config(Other) -> error({invalid_observability, Other}).
 
 -spec stop_backend(module() | nil) -> ok.
 stop_backend(nil) -> ok;
@@ -188,14 +184,8 @@ stop_backend(Backend) ->
         persistent_term:erase(?SERVER)
     end.
 
+%% Only the started server writes ?SERVER (init/1), so a backend is never cached
+%% without its start/1 having run.
 -spec backend() -> module() | nil.
 backend() ->
-    case persistent_term:get(?SERVER, false) of
-        false ->
-            % Not yet initialized; look at app env and cache
-            Module = config_module(application:get_env(shackle, observability, nil)),
-            persistent_term:put(?SERVER, Module),
-            Module;
-        M ->
-            M
-    end.
+    persistent_term:get(?SERVER, nil).

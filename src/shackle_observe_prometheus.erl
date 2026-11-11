@@ -187,8 +187,9 @@ ensure_started() ->
 % shackle_request_total is counted per socket send in shackle_server.erl.
 % Counting it on call stop as well would double count every call.
 
-% [shackle, cast, stop] -> shackle_cast_total
-handle_event([shackle, cast, stop], _Measurements, #{pool := Pool, client := Client}) ->
+% [shackle, cast, sent] -> shackle_cast_total. Emitted by shackle:cast_impl/5 after
+% a message was sent, so failed casts and span stops are not counted.
+handle_event([shackle, cast, sent], _Measurements, #{pool := Pool, client := Client}) ->
     prometheus_counter:inc(shackle_cast_total, [Client, Pool], 1);
 
 % [shackle, call, exception] -> shackle_error_total{reason=exception}

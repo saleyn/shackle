@@ -9,15 +9,18 @@ Shackle now includes a production-grade, pluggable observability system inspired
 - **Multiple instrumentation points**: Spans for timed operations (start/stop/exception events), one-shot events for discrete incidents
 - **Clean event structure**: Structured metadata and measurements on every event
 - **Graceful degradation**: Disabled observability or backend failures don't crash the app
-- **Lazy dependency loading**: Only required backends are started
+- **Efficient backend caching**: Backends are initialized once per pool start and cached in persistent_term
 
 ## Quick Start
 
-### Disable Observability (Default)
+### Default: Disabled
+
+Observability is disabled by default (no metrics collection). To enable it, configure a backend.
+
+### Enable Prometheus
 
 ```erlang
-% This is the default; no configuration needed
-application:set_env(shackle, observability, nil).
+application:set_env(shackle, observability, prometheus).
 ```
 
 ### Enable Telemetry Backend
@@ -99,8 +102,7 @@ Convert with `erlang:convert_time_unit(Duration, native, microsecond)` or simila
 
 ### Connection Lifecycle
 
-Connection spans are defined in `shackle_observe_span` but nothing invokes them,
-so no `[shackle, connect, ...]` events are emitted. Connection activity is
+No `[shackle, connect, ...]` span is defined or emitted. Connection activity is
 reported through the Prometheus counters below.
 
 ### Error Events
@@ -120,7 +122,7 @@ be configured.
 
 - `shackle_request_total` — Requests written to a socket (one per request sent)
 - `shackle_reply_total` — Replies delivered to callers
-- `shackle_cast_total` — Cast calls completed (`cast/2,3,4`)
+- `shackle_cast_total` — Messages sent to a pool server, for both `call` and `cast` (failed calls and casts are not counted)
 - `shackle_error_total{reason}` — Errors. Reasons: `timeout`, `no server`,
   `no socket`, `send rejected`, `send error`, `handle_request error`,
   `handle_timeout error`, `handle_timeout exception`, `client connect error`,
@@ -155,25 +157,16 @@ prometheus_text_format:format().
 
 ## Architecture
 
-The observability system uses a facade pattern with three layers:
+The observability system has two layers:
 
 ### Layer 1: Facade (`shackle_observe`)
 
 Central singleton managing the backend lifecycle. Provides the public API:
-- `span/3` — Timed operation wrapping (emits start/stop/exception events)
+- `span/3` — Timed operation wrapping (emits start/stop/exception events). With no backend it just runs the closure.
 - `event/2,3` — One-shot event emission
 - `enabled/0` — Check if observability is active
-- `dispatcher/0` — Get the optimal dispatcher for this context
 
-### Layer 2: Dispatchers
-
-Strategy pattern for eliminating branch overhead:
-- `shackle_observe_noop` — Used when disabled (passthrough, zero overhead)
-- `shackle_observe_span` — Used when enabled (wraps in spans)
-
-Hot-path code checks the dispatcher once and stores it, calling the same function signatures on both. When disabled, it's literally just calling through to the closure.
-
-### Layer 3: Backends
+### Layer 2: Backends
 
 Implement `behaviour(shackle_observe)` with three callbacks:
 - `start/1` — Initialize backend, declare metrics, start dependencies
@@ -186,26 +179,16 @@ Built-in backends:
 
 ## Performance
 
-When observability is disabled (the default), the system has **zero runtime cost**:
+When observability is disabled (`observability` set to `nil`), the system has **zero runtime cost**:
 
 - No closures allocated
-- No function calls in hot path (dispatcher pattern + persistent_term caching)
-- No branching (persistent_term lookup is a single lookup, cached at init)
-
-Disabled dispatcher functions literally call through to the closure unchanged:
-
-```erlang
-call(_PoolName, Fun) ->
-    Fun().
-```
-
-This means when observability is disabled, `shackle:call/3` has no observability overhead beyond the dispatcher lookup at pool initialization.
+- `shackle:call/3` and `cast/4` call `shackle_observe:span/3`, which checks the backend once and runs the closure directly when none is configured.
 
 ## Integration Points
 
 Observability events are emitted at these points in shackle:
 
-- **shackle.erl** — `call/3,4` and `cast/3,4` wrapped in dispatcher spans
+- **shackle.erl** — `call/3,4` and `cast/3,4` wrapped in `shackle_observe:span/3`
 - **Future: shackle_server.erl** — Connection attempts, timeouts, disconnects
 - **Future: shackle_tcp.erl, shackle_ssl.erl, shackle_udp.erl** — Protocol-specific connection events
 
@@ -219,16 +202,10 @@ No other modules need to be aware of observability; it's completely transparent.
 shackle_observe:enabled().  % true | false
 ```
 
-### Get the active dispatcher
-
-```erlang
-Dispatcher = shackle_observe:dispatcher().  % shackle_observe_noop | shackle_observe_span
-```
-
 ### Check the configured backend
 
 ```erlang
-application:get_env(shackle, observability, nil).
+application:get_env(shackle, observability, prometheus).
 ```
 
 ## Related Reading

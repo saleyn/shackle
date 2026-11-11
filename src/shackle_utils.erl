@@ -296,7 +296,7 @@ merge_options(AppEnv, Defaults, KeyMap) when
     F = fun({I, {Type, D}}, A) ->
         % Translate the key if a key map is provided
         K = maps:get(I, KeyMap, I),
-        case maps:get(K, Env, undefined) of
+        case top_level(I, K, Env) of
             V when V == undefined ->
                 Opts = maps:get(Type, AppEnvOpts),
                 Def = maps:get(I, DefaultOpts, D),
@@ -335,6 +335,12 @@ merge_options(AppEnv, Defaults, KeyMap) when
     validate_options(PoolConfig),
     validate_options(ClientConfig),
     {ClientConfig, PoolConfig}.
+
+%% servers and address are read only from the shackle/client sub-config. A
+%% top-level app-env key with the same name belongs to the host application.
+top_level(servers, _K, _Env) -> undefined;
+top_level(address, _K, _Env) -> undefined;
+top_level(_I, K, Env) -> maps:get(K, Env, undefined).
 
 to_map(undefined)         -> #{};
 to_map(L) when is_list(L) -> maps:from_list(L);

@@ -55,7 +55,6 @@ connections
 -define(DRAIN_TIMEOUT_MS, 5000).
 
 -record(state, {
-    address          :: shackle:inet_address(),
     client           :: shackle:client(),
     id               :: id(),
     srv_idx          :: binary(),
@@ -64,7 +63,6 @@ connections
     service_name     :: binary(),
     parent           :: pid(),
     pool_name        :: shackle_pool:name(),
-    port             :: shackle:inet_port(),
     protocol         :: shackle:protocol(),
     queue            :: #{shackle:external_request_id() => shackle:cast()},
     reconnect_state  :: undefined | reconnect_state(),
@@ -273,24 +271,22 @@ init(Name, Parent, Opts) ->
                 fun M:F/3
         end,
 
-    % Initialize multi-server state if servers list is provided
-    ServersState = case ?LOOKUP(servers, ServerOpts1, undefined) of
+    %% Single-address mode is a servers list with one entry, so every connect
+    %% goes through the same path. A top-level port is needed only here; a
+    %% servers list carries its own ports (or the default port).
+    ServersList = case ?LOOKUP(servers, ServerOpts1, undefined) of
         undefined ->
-            % Fallback to single address/port
-            undefined;
-        ServersList ->
-            shackle_servers:new(ServersList, Port)
+            lists:member(Port, [undefined, 0]) andalso
+                erlang:error({missing_port_option, Name, ServerOpts1}),
+            [{Address, Port}];
+        Servers ->
+            Servers
     end,
+    ServersState = shackle_servers:new(ServersList, Port),
 
     MaxRequests = ?LOOKUP(max_requests, ServerOpts1, ?DEFAULT_MAX_REQUESTS),
 
-    %% A top-level port is only needed in single-address mode. With a servers list,
-    %% every entry has its port (or the default port is checked by shackle_servers).
-    ServersState == undefined andalso lists:member(Port, [undefined, 0]) andalso
-        erlang:error({missing_port_option, Name, ServerOpts1}),
-
     {ok, {#state {
-        address = Address,
         client = Client,
         id = Id,
         srv_idx = SrvIdxBin,
@@ -299,7 +295,6 @@ init(Name, Parent, Opts) ->
         service_name = ServiceName,
         parent = Parent,
         pool_name = PoolName,
-        port = Port,
         protocol = Protocol,
         queue = queue_new(),
         reconnect_state = ReconnectState,
@@ -317,15 +312,15 @@ init(Name, Parent, Opts) ->
 -spec handle_msg(term(), {state(), client_state()}) ->
     {ok, term()}.
 
-handle_msg({request, [Casts | _]}, {#state {socket = undefined} = S, CliState}) ->
+handle_msg({request, [#cast {} = Cast | _]}, {#state {socket = undefined} = S, CliState}) ->
     inc_metrics(S, shackle_error_total, <<"no socket">>),
-    reply({error, no_socket}, wrap(Casts), S, CliState);
+    reply({error, no_socket}, [Cast], S, CliState);
 
-handle_msg({request, [Casts | _]}, {#state{bounce_state = BS} = S, CliState}) when BS /= waiting ->
+handle_msg({request, [#cast {} = Cast | _]}, {#state{bounce_state = BS} = S, CliState}) when BS /= waiting ->
     %% The server is either in the connection draining state or about to be
     %% bounced - reject the client's request.
     inc_metrics(S, shackle_error_total, <<"send rejected">>),
-    reply({error, send_rejected}, wrap(Casts), S, CliState);
+    reply({error, send_rejected}, [Cast], S, CliState);
 
 handle_msg({request, [#cast {timeout = _Timeout} = Cast, Request]},
         {#state{bounce_state = waiting, client = Client} = State, ClientState}) ->
@@ -366,33 +361,6 @@ handle_msg({request, [#cast {timeout = _Timeout} = Cast, Request]},
             reply({error, client_crash}, [Cast], State, ClientState)
     end;
 
-handle_msg({request, [Casts, Requests, Count]}, {#state {client = Client} = State, ClientState})
-    when is_integer(Count), Count >= 0 ->
-    try client_handle_requests(Client, Casts, Requests, ClientState) of
-        {ok, Casts2, ExtRequestIds, Data, ClientState2} ->
-            Protocol = State#state.protocol,
-            Socket = State#state.socket,
-            case Protocol:send(Socket, Data) of
-                ok ->
-                    inc_metrics(State, shackle_request_total, Count),
-                    State2 = handle_request_ids_from_client(ExtRequestIds, Casts2, State, ClientState),
-                    {ok, {State2, ClientState2}};
-                {error, Reason} ->
-                    inc_metrics(State, shackle_error_total, <<"send error">>),
-                    ?WARN(State#state.pool_name, "SrvIdx=~s send error: ~p",
-                        [State#state.srv_idx, Reason]),
-                    {ok, {State3, ClientState3}} =
-                        reply({error, socket_closed}, Casts2, State, ClientState2),
-                    close(State3, ClientState3)
-            end
-    catch
-        ?EXCEPTION(E, R, Stacktrace) ->
-            inc_metrics(State, shackle_error_total, <<"handle_request error">>),
-            ?WARN(State#state.pool_name, "handle_request crash: ~p:~p~n~p~n",
-                [E, R, ?GET_STACK(Stacktrace)]),
-                reply({error, client_crash}, Casts, State, ClientState)
-    end;
-
 handle_msg({ssl, Socket, Data}, {State, ClientState}) ->
     handle_msg_data(Socket, Data, State, ClientState);
 handle_msg({ssl_closed, Socket}, {State, ClientState}) ->
@@ -403,10 +371,9 @@ handle_msg({tcp, Socket, Data}, {State, ClientState}) ->
     report_socket_rtt(State), handle_msg_data(Socket, Data, State, ClientState);
 handle_msg({tcp_closed, Socket}, {State, ClientState}) ->
     handle_msg_close(Socket, State, ClientState);
-handle_msg({'$socket', Socket, select, _}, {#state{socket = Socket} = State, CS}) ->
-    handle_socket_select(Socket, State, CS);
-handle_msg({tcp_error, Socket, Reason}, {State, ClientState}) ->
-    handle_msg_error(Socket, Reason, State, ClientState);
+handle_msg({'$socket', S, select, _}, {#state{socket = S} = State, CS}) -> handle_socket_select(S, State, CS);
+handle_msg({'$socket', _, _, _}, {State, CS}) -> {ok, {State, CS}};
+handle_msg({tcp_error, Socket, Reason}, {State, ClientState}) -> handle_msg_error(Socket, Reason, State, ClientState);
 handle_msg({udp, Socket, _Ip, _InPortNo, Data}, {State, ClientState}) ->
     handle_msg_data(Socket, Data, State, ClientState);
 handle_msg({udp_closed, Socket}, {State, ClientState}) ->
@@ -434,6 +401,7 @@ handle_msg(?MSG_CONNECT, {#state {
                         reconnect_state = ReconnectState2,
                         timer_ref = undefined,
                         bounce_state = waiting,
+                        drain_deadline = undefined,
                         request_count = 0  %% Reset request count on reconnect for max_requests
                     })),
                     ?ON_BOUNCE_EVENT(State1, #{
@@ -611,8 +579,10 @@ client_setup(Client, PoolName, Protocol, Socket, ClientState) ->
     Protocol:setopts(Socket, [{active, false}]),
     try client_setup_(Client, Socket, ClientState) of
         {ok, ClientState2} ->
-            Protocol:setopts(Socket, [{active, true}]),
-            {ok, ClientState2};
+            case Protocol:setopts(Socket, [{active, true}]) of
+                ok -> {ok, ClientState2};
+                {error, Reason} -> {error, Reason, ClientState2}
+            end;
         {error, Reason, ClientState2} ->
             ?WARN(PoolName, "setup error: ~p", [Reason]),
             {error, Reason, ClientState2}
@@ -642,18 +612,6 @@ client_handle_request(Client, Cast, Request, ClientState) ->
             Else
     end.
 
-client_handle_requests(Client, Casts, Requests, ClientState) ->
-    case Client:handle_request(Requests, ClientState) of
-        {ok, ExtRequestIds, Data, ClientState_} ->
-            {ok, Casts, ExtRequestIds, Data, ClientState_};
-        {ok, ExtRequestIds, Data, RequestStates, ClientState_} ->
-            Casts_ = [Cast#cast{request_state = RequestState} ||
-                {Cast, RequestState} <- lists:zip(Casts, RequestStates)],
-            {ok, Casts_, ExtRequestIds, Data, ClientState_};
-        Else ->
-            Else
-    end.
-
 close(State, ClientState) ->
     close(State, ClientState, disconnected).
 close(#state {id = Id} = State, ClientState, Reason)
@@ -673,8 +631,6 @@ close(#state {id = Id} = State, ClientState, Reason)
 
 %% Drop the cached DNS result for the current server, so the reconnect that follows
 %% a closed socket resolves it again.
-invalidate_dns(#state{servers = undefined, address = Address}) ->
-    shackle_servers:invalidate_dns(Address);
 invalidate_dns(#state{servers = ServersState}) ->
     {Host, _Port} = shackle_servers:current(ServersState),
     shackle_servers:invalidate_dns(Host).
@@ -698,40 +654,7 @@ close_socket(#state{socket = Socket, protocol = Protocol,
     inc_metrics(State, shackle_socket_total, MetricsReason),
     State#state{socket = undefined}.
 
-connect(#state{
-    servers = undefined,
-    address = Address,
-    srv_idx = ID,
-    pool_name = PoolName,
-    port = Port,
-    protocol = Protocol,
-    socket_options = SocketOptions
-} = State) ->
-    %% Single server mode (backwards compatibility). Resolution goes through
-    %% shackle_servers, so IP literals, Kubernetes names, the DNS cache and IPv6
-    %% errors behave the same as in multi-server mode.
-    case shackle_servers:resolve_host(Address) of
-        {ok, [_ | _] = Ips} ->
-            Ip = shackle_utils:random_element(Ips),
-            case Protocol:connect(Ip, Port, SocketOptions) of
-                {ok, Socket} ->
-                    inc_metrics(State, shackle_socket_total, <<"created">>),
-                    State1 = State#state{socket = Socket, sock_id = State#state.sock_id+1},
-                    trace(State1, connect, {ok, ?LINE}),
-                    {ok, State1};
-                {error, Reason} ->
-                    ?WARN(PoolName, "#~s ~s:~w ~w connect error (~w): ~p", [ID, Address, Port, Protocol, Ip, Reason]),
-                    shackle_servers:invalidate_dns(Address),
-                    trace(State#state{sock_id = State#state.sock_id+1}, connect_failed, {Reason, ?LINE}),
-                    {error, Reason}
-            end;
-        {error, Reason} ->
-            ?WARN(PoolName, "getaddrs ~p error: ~p", [Address, Reason]),
-            trace(State#state{sock_id = State#state.sock_id+1}, getaddr_error, {Reason, ?LINE}),
-            {error, Reason}
-    end;
-connect(#state{servers = ServersState} = State) when ServersState /= undefined ->
-    %% Multi-server mode with failover
+connect(State) ->
     try_servers_loop(State).
 
 %% @private
@@ -830,6 +753,9 @@ handle_msg_close(_Socket, State, ClientState) ->
 %% notification arrive.
 handle_socket_select(Socket, State, ClientState) ->
     case shackle_socket:recv(Socket) of
+        {armed, Data} ->
+            %% The select is already re-armed: deliver this chunk and wait for the next one
+            handle_msg({tcp, Socket, Data}, {State, ClientState});
         {ok, Data} ->
             case handle_msg({tcp, Socket, Data}, {State, ClientState}) of
                 {ok, {#state{socket = Socket} = State1, ClientState1}} ->
@@ -1013,11 +939,6 @@ cancel_all_timers(State) ->
         timer_ref = undefined
     }.
 
-wrap(Casts) when is_list(Casts) ->
-    Casts;
-wrap(Cast) ->
-    [Cast].
-
 reply(Reply, Casts, State, ClientState) ->
     reply2(Reply, Casts, State),
     maybe_bounce(State, ClientState).
@@ -1043,18 +964,6 @@ reply_all(Reply, [Cast | T], State, ClientState) ->
     cancel_timer(Cast),
     {ok, {State1, ClientState1}} = reply(Reply, [Cast], State, ClientState),
     reply_all(Reply, T, State1, ClientState1).
-
-handle_request_ids_from_client(ExtRequestIds, Casts, State, ClientState) ->
-    ExtRequestIdsCasts = lists:zip(ExtRequestIds, Casts),
-    lists:foldl(fun (IdCast, State_) ->
-        handle_request_id_from_client(IdCast, State_, ClientState)
-    end, State, ExtRequestIdsCasts).
-
-handle_request_id_from_client({undefined, Cast}, State, ClientState) ->
-    reply(ok, [Cast], State, ClientState),
-    State;
-handle_request_id_from_client({ExtRequestId, Cast}, State, _ClientState) ->
-    set_receive_timeout(State, ExtRequestId, Cast).
 
 set_receive_timeout(State, RequestId, #cast{timeout = infinity} = Cast) ->
     %% erlang:send_after/3 rejects `infinity', so no timer is armed for this request.
@@ -1219,14 +1128,16 @@ bounce_check(State, ClientState, _) ->
 
 inc_metrics(State, Metric) ->
     inc_metrics(State, Metric, 1).
+%% The metadata maps are built only when a backend is configured: this runs
+%% several times per request, usually with observability off.
 inc_metrics(#state{service_name = SName, pool_name = Pool}, Metric, Inc) when is_integer(Inc) ->
-    log_metrics2(#{
+    shackle_observe:enabled() andalso log_metrics2(#{
         metric => Metric,
         client => SName,
         pool   => Pool
     }, Inc);
 inc_metrics(#state{service_name = SName, pool_name = Pool}, Metric, Reason) when is_binary(Reason) ->
-    log_metrics2(#{
+    shackle_observe:enabled() andalso log_metrics2(#{
         metric => Metric,
         client => SName,
         pool   => Pool,
@@ -1238,13 +1149,15 @@ log_metrics2(Metadata, N) ->
     shackle_observe:event([metric, counter], #{count => N}, Metadata).
 
 observe_metrics(#state{service_name = SName, pool_name = PoolName}, #cast{timestamp = Timestamp}, Metric) ->
-    TimeDiff = erlang:monotonic_time(microsecond) - Timestamp,
-    % Emit observability event for histogram
-    shackle_observe:event([metric, histogram], #{value => TimeDiff}, #{
-        metric => Metric,
-        client => SName,
-        pool   => PoolName
-    }).
+    shackle_observe:enabled() andalso begin
+        TimeDiff = erlang:monotonic_time(microsecond) - Timestamp,
+        % Emit observability event for histogram
+        shackle_observe:event([metric, histogram], #{value => TimeDiff}, #{
+            metric => Metric,
+            client => SName,
+            pool   => PoolName
+        })
+    end.
 
 report_socket_rtt(#state{client = Client, pool_name = PoolName, socket = Socket}) ->
     case persistent_term:get({shackle_socket_rtt_callback, Client}, undefined) of
@@ -1262,6 +1175,9 @@ report_socket_rtt(#state{client = Client, pool_name = PoolName, socket = Socket}
 -define(TCP_INFO_SIZE, 256).
 -define(RTT_OFFSET, 88).
 
+%% shackle_socket handles are socket-module sockets, which inet:getopts/2 rejects.
+get_socket_rtt(Socket) when not is_port(Socket) ->
+    error;
 get_socket_rtt(Socket) ->
     case inet:getopts(Socket, [{raw, ?IPPROTO_TCP, ?TCP_INFO, ?TCP_INFO_SIZE}]) of
         {ok, [{raw, ?IPPROTO_TCP, ?TCP_INFO, Bin}]} when byte_size(Bin) >= ?RTT_OFFSET + 4 ->
